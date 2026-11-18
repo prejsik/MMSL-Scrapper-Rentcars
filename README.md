@@ -1,4 +1,4 @@
-# RentCars.pl Cheapest Offers Scraper
+# MMSL - Scrapper Rentcars
 
 This is a separate RentCars.pl scraper module based on the DiscoverCars scraper structure.
 
@@ -128,8 +128,8 @@ Both schedules follow Warsaw local time automatically in summer and winter. The 
 Manual GitHub runs can override locations, rolling days, durations, and speed mode from the `workflow_dispatch` form.
 Telegram notifications use the repository `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` secrets.
 Both scheduled runs use the same Telegram secrets but publish separate reports:
-- Morning report (19:17 the previous evening, 60 dates): https://prejsik.github.io/rentcars-tool/morning/report.html
-- Afternoon report (10:17, 20 dates): https://prejsik.github.io/rentcars-tool/afternoon/report.html
+- Morning report (19:17 the previous evening, 60 dates): https://prejsik.github.io/MMSL-Scrapper-Rentcars/morning/report.html
+- Afternoon report (10:17, 20 dates): https://prejsik.github.io/MMSL-Scrapper-Rentcars/afternoon/report.html
 
 Each deployment preserves the other profile and compares freshness only within its own profile. Telegram links to the matching report after verifying its run and attempt. The site index links to both reports; the legacy `/report.html` remains an alias for the most recent report. A new profile becomes available after its first successful publication. If the other report cannot be read and verified, deployment is blocked rather than deleting it.
 
