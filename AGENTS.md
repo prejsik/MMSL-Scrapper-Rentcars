@@ -1,0 +1,17 @@
+# Zasady dla agentów (Codex i Claude Code)
+
+Ten plik czytają oba narzędzia; `CLAUDE.md` tylko go importuje. Repozytorium jest publiczne. To jedyne aktualne źródło RentCars; kopia w repo `discovercars-tool` jest nieaktualna.
+
+## Co uruchamia scalenie
+
+- Automaty startują z `main`: „RentCars daily run” (10:17 i 19:17), „RentCars morning status” (7:00) i „RentCars daily watchdog”. Publikują raport na GitHub Pages i wysyłają podsumowanie na Telegram. Scalona zmiana działa od najbliższego przebiegu.
+- `gh workflow run` uruchamiaj tylko na wyraźną prośbę.
+
+## Testy
+
+- Lokalnie: `npm test`.
+- „RentCars push smoke” startuje dopiero po scaleniu do `main`, więc PR nie ma testów na GitHubie i o scaleniu decyduje `npm test` uruchomiony lokalnie; podaj jego wynik w opisie PR. Po scaleniu sprawdź wynik smoke: `gh run list -w "RentCars push smoke" -L 1`.
+
+## Publiczne repo
+
+Wyniki (`output/`), sekrety i dane osobowe zostają poza commitami. Konfiguracja trafia do repo tylko jako `*.example.json`.
