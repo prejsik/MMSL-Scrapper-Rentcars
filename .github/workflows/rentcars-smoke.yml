@@ -11,6 +11,16 @@ on:
       - "rentcars.config.example.json"
       - "package.json"
       - "package-lock.json"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/rentcars-*.yml"
+      - "src/rentcars/**"
+      - "tests/**"
+      - "rentcars.config.example.json"
+      - "package.json"
+      - "package-lock.json"
 
 permissions:
   contents: read

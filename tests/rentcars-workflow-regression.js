@@ -78,7 +78,7 @@ test("cancelling a daily run blocks merging and publishing its partial report", 
   }
 });
 
-function executeNotification({ withBody, pagesSiteAvailable = true, metadataAttempt = "2", metadataRunId = "77",
+function executeNotification({ withBody, pagesSiteAvailable = true, pagesApiRedirects = false, metadataAttempt = "2", metadataRunId = "77",
   malformedMetadata = false, htmlStatus = "200", htmlMarker = true, staleHtml = false,
   localHtmlAvailable = true, reportProfile = "afternoon", notificationPayload, mergeResult = "success",
   expectedMetadataRequests }) {
@@ -117,16 +117,22 @@ function executeNotification({ withBody, pagesSiteAvailable = true, metadataAtte
     "  local is_pages_api=false",
     "  local is_metadata=false",
     "  local is_html=false",
+    "  local follow_redirects=false",
     "  local previous=''",
     "  local argument",
     "  for argument in \"$@\"; do",
     "    if [[ \"$previous\" == '--output' ]]; then output_path=\"$argument\"; fi",
     "    if [[ \"$argument\" == */repos/*/pages ]]; then is_pages_api=true; fi",
+    "    if [[ \"$argument\" == --location ]]; then follow_redirects=true; fi",
     "    if [[ \"$argument\" == *report-meta.json* ]]; then is_metadata=true; fi",
     "    if [[ \"$argument\" == https://*report.html* ]]; then is_html=true; fi",
     "    previous=\"$argument\"",
     "  done",
     "  if [[ \"$is_pages_api\" == true ]]; then",
+    "    if [[ \"$MOCK_PAGES_API_REDIRECTS\" == true && \"$follow_redirects\" == false ]]; then",
+    "      printf '301'",
+    "      return 0",
+    "    fi",
     "    if [[ \"$MOCK_PAGES_SITE_AVAILABLE\" == true ]]; then",
     "      printf '{\"html_url\":\"https://reports.example.test/rentcars\"}' > \"$output_path\"",
     "      printf '200'",
@@ -167,6 +173,7 @@ function executeNotification({ withBody, pagesSiteAvailable = true, metadataAtte
         CAPTURE_PATH: capturePath.replaceAll("\\", "/"),
         RUNNER_TEMP: tempDir.replaceAll("\\", "/"),
         MOCK_PAGES_SITE_AVAILABLE: pagesSiteAvailable ? "true" : "false",
+        MOCK_PAGES_API_REDIRECTS: pagesApiRedirects ? "true" : "false",
         MOCK_PUBLIC_META_PATH: publicMetaPath.replaceAll("\\", "/"),
         MOCK_PUBLIC_HTML_PATH: publicHtmlPath.replaceAll("\\", "/"),
         REQUESTS_PATH: requestsPath.replaceAll("\\", "/"),
@@ -233,6 +240,59 @@ test("daily notification sends one verified report link or one bounded link-free
     const invalidHtmlMessage = execute({ withBody: true, ...failure });
     assert.doesNotMatch(invalidHtmlMessage, /report\.html/);
     assert.match(invalidHtmlMessage, /GitHub Pages deployment was not confirmed for this run/);
+  }
+});
+
+test("daily notification resolves the current Pages link after a repository rename", () => {
+  const message = executeNotification({ withBody: true, pagesApiRedirects: true });
+  assert.match(message, /Current HTML report:\nhttps:\/\/reports\.example\.test\/rentcars\/afternoon\/report\.html/);
+});
+
+test("publication follows Pages API redirects and fails when Pages cannot be enabled", () => {
+  const daily = workflow(".github/workflows/rentcars-daily.yml");
+  const statusStep = daily.jobs.publish.steps.find((step) => step.id === "pages-status");
+  const bash = process.platform === "win32" ? "C:/Program Files/Git/bin/bash.exe" : "bash";
+  const mockCurl = [
+    "curl() {",
+    "  local args=\" $* \"",
+    "  if [[ \"$args\" == *' --data '* ]]; then",
+    "    if [[ \"$MOCK_CREATE_STATUS\" == 301 && \"$args\" == *' --location '* && \"$args\" == *' --post301 '* ]]; then",
+    "      printf '201'",
+    "    else",
+    "      printf '%s' \"$MOCK_CREATE_STATUS\"",
+    "    fi",
+    "  elif [[ \"$MOCK_GET_STATUS\" == 301 && \"$args\" == *' --location '* ]]; then",
+    "    printf '200'",
+    "  else",
+    "    printf '%s' \"$MOCK_GET_STATUS\"",
+    "  fi",
+    "}"
+  ].join("\n");
+  for (const [getStatus, createStatus, succeeds] of [
+    ["200", "", true], ["301", "", true], ["403", "", false],
+    ["404", "201", true], ["404", "301", true], ["404", "500", false]
+  ]) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rentcars-pages-status-"));
+    try {
+      const output = path.join(dir, "output.txt").replaceAll("\\", "/");
+      const result = spawnSync(bash, ["--noprofile", "--norc", "-eo", "pipefail", "-c", `${mockCurl}\n${statusStep.run}`], {
+        cwd: dir,
+        encoding: "utf8",
+        env: { ...process.env, GITHUB_OUTPUT: output, GITHUB_TOKEN: "test-token",
+          GITHUB_API_URL: "https://api.github.test", GITHUB_REPOSITORY: "mmcars/rentcars",
+          MOCK_GET_STATUS: getStatus, MOCK_CREATE_STATUS: createStatus }
+      });
+      assert.ifError(result.error);
+      if (succeeds) {
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(fs.readFileSync(output, "utf8").trim(), "enabled=true", `GET ${getStatus} / POST ${createStatus}`);
+      } else {
+        assert.equal(result.status, 1, `GET ${getStatus} / POST ${createStatus}`);
+        assert.match(result.stdout, new RegExp(`::error::.*HTTP ${createStatus || getStatus}`));
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   }
 });
 
