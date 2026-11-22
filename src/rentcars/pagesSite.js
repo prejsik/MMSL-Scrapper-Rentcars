@@ -2,6 +2,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { createHash } = require("node:crypto");
+const { OVH_DAYTIME_RUN_TITLE } = require("./watchdog");
 
 const PROFILES = ["morning", "afternoon"];
 const MARKER = '<meta name="rentcars-report-metadata-version" content="1">';
@@ -145,7 +146,7 @@ async function main() {
       const response = await api(`actions/runs/${metadata.run_id}`);
       if (!response.ok) throw new Error(`Cannot identify legacy run: HTTP ${response.status}.`);
       const run = await response.json();
-      return run.display_title === "RentCars daytime run" ? "afternoon" : "morning";
+      return ["RentCars daytime run", OVH_DAYTIME_RUN_TITLE].includes(run.display_title) ? "afternoon" : "morning";
     }
   });
   if (!result.publish) { console.log("A newer report exists for this profile; keeping artifact only."); return; }

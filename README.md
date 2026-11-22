@@ -115,6 +115,12 @@ The scheduled GitHub profiles share all settings except the pickup-date horizon:
 - `19:17 Europe/Warsaw`: 60 rolling pickup dates from tomorrow
 - `10:17 Europe/Warsaw`: 20 rolling pickup dates from tomorrow
 
+### On-time starts from the OVH server
+
+GitHub delays scheduled starts by several hours. The OVH server therefore starts both slots on time with systemd user timers (`ops/ovh/`): at 19:17 and 10:17 Europe/Warsaw it runs `gh workflow run rentcars-daily.yml -f scheduled_slot=night|daytime`. These runs are named `RentCars daily run (OVH)` and `RentCars daytime run (OVH)`; the watchdog trusts them like scheduled runs. The GitHub schedule stays as a fallback: the plan job's gate lets only the earliest trusted run of each slot (night slot per report cycle, daytime slot per Warsaw date) collect data, so the delayed duplicate finishes without scraping. If the gate cannot read earlier runs, it collects rather than risk a missing report.
+
+Install or update the timers on the server with `ops/ovh/install.sh` (requires `gh` logged in with the `workflow` scope and user lingering). Check them with `systemctl --user list-timers 'rentcars-trigger-*'` and `journalctl --user -u 'rentcars-trigger@*'`.
+
 Both schedules follow Warsaw local time automatically in summer and winter. The primary report cycle starts at 19:17 and belongs to the following morning; the morning status and watchdog checkpoints use the same cycle. Scheduled attempts use the original run creation time to keep the same pickup dates when retrying after midnight.
 - all locations from `src/rentcars/locations.json`
 - `durations: 2,3,4,5,6,7,8,9,10,11,12,13,14`
@@ -133,7 +139,7 @@ Both scheduled runs use the same Telegram secrets but publish separate reports:
 
 Each deployment preserves the other profile and compares freshness only within its own profile. Telegram links to the matching report after verifying its run and attempt. The site index links to both reports; the legacy `/report.html` remains an alias for the most recent report. A new profile becomes available after its first successful publication. If the other report cannot be read and verified, deployment is blocked rather than deleting it.
 
-The 10:17 profile has 260 date/duration scenarios, 2600 airport checks, and seven chunks. GitHub may delay scheduled starts. Rerunning a scheduled attempt retains its original schedule profile; manual runs keep the 60-day default unless overridden and publish in the morning slot.
+The 10:17 profile has 260 date/duration scenarios, 2600 airport checks, and seven chunks. GitHub may delay scheduled starts. Rerunning a scheduled attempt retains its original schedule profile; manual runs keep the 60-day default unless overridden and publish in the morning slot. Runs with `scheduled_slot` ignore the other manual inputs and use the schedule settings.
 The 10:17 run is named `RentCars daytime run`. Completion-triggered recovery treats the daytime and night profiles separately, so a shorter report cannot replace recovery of the 60-day collection. Existing morning watchdog checkpoints check only the night profile; they do not detect a missing daytime trigger.
 
 Watchdog run discovery uses GitHub's supported `created` date filter and validates the returned window and completeness. Inspection keys and no-cache headers are additional safeguards, not proof of fresh data. Scheduled checks recognize today's morning run by its Warsaw calendar date, even if a checkpoint is delayed beyond twelve hours. Invalid or incomplete API evidence blocks recovery and produces an inspection alert. A completed replacement suppresses further retries and exhausted-attempt alerts for the older run.

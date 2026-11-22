@@ -45,6 +45,10 @@ jobs:
               trusted_event=true
             elif [[ "$SOURCE_EVENT" == "workflow_dispatch" && "$SOURCE_TITLE" == "RentCars watchdog recovery" ]]; then
               trusted_event=true
+            elif [[ "$SOURCE_EVENT" == "workflow_dispatch" \
+              && ( "$SOURCE_TITLE" == "RentCars daily run (OVH)" || "$SOURCE_TITLE" == "RentCars daytime run (OVH)" ) ]]; then
+              # Planned 19:17 / 10:17 slots started on time by the OVH timer.
+              trusted_event=true
             fi
 
             if [[ "$SOURCE_REPOSITORY" == "$GITHUB_REPOSITORY" \

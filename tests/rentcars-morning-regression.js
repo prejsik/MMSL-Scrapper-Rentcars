@@ -131,6 +131,7 @@ test("failed partial report does not invent a completion time", async () => {
 test("no morning run today never reports a daytime, old or manual run as today's result", async () => {
   const api = mockApi({ runs: [
     run(79, { display_title: "RentCars daytime run" }),
+    run(80, { event: "workflow_dispatch", display_title: "RentCars daytime run (OVH)" }),
     run(78, { event: "workflow_dispatch" }),
     run(77, { created_at: "2026-09-25T23:20:00Z" })
   ] });
