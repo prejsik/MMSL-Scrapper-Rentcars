@@ -203,8 +203,6 @@ function executeNotification({ withBody, pagesSiteAvailable = true, metadataAtte
         TELEGRAM_BOT_TOKEN: "test-token",
         TELEGRAM_CHAT_ID: "test-chat",
         GITHUB_TOKEN: "test-github-token",
-        ARTIFACT_URL: "https://github.test/artifacts/55",
-        RUN_URL: "https://github.test/actions/runs/77",
         GITHUB_RUN_ID: "77",
         GITHUB_RUN_ATTEMPT: "2",
         GITHUB_API_URL: "https://api.github.test",
@@ -220,9 +218,9 @@ function executeNotification({ withBody, pagesSiteAvailable = true, metadataAtte
     const requests = fs.readFileSync(requestsPath, "utf8").trim().split(/\r?\n/);
     assert.equal(requests.filter(value => value === "telegram").length, 1);
     for (const kind of ["metadata", "html"]) {
-      assert.ok(requests.filter(value => value === kind).length <= 8, `${kind} requests must remain bounded`);
+      assert.ok(requests.filter(value => value === kind).length <= 18, `${kind} requests must remain bounded`);
     }
-    assert.ok(requests.filter(value => value === "sleep").length <= 7);
+    assert.ok(requests.filter(value => value === "sleep").length <= 17);
     if (expectedMetadataRequests !== undefined) {
       assert.equal(requests.filter(value => value === "metadata").length, expectedMetadataRequests);
     }
@@ -234,52 +232,59 @@ function executeNotification({ withBody, pagesSiteAvailable = true, metadataAtte
 
 test("daily notification sends one verified report link or one bounded link-free fallback", () => {
   const execute = executeNotification;
+  const linkCount = (message) => (message.match(/https?:\/\//g) || []).length;
 
   const successMessage = execute({ withBody: true });
   assert.equal((successMessage.match(/RentCars\.pl: run finished/g) || []).length, 1);
-  assert.match(successMessage, /Current HTML report:\nhttps:\/\/reports\.example\.test\/rentcars\/afternoon\/report\.html\n\nArtifact backup \(requires GitHub sign-in\):/);
+  assert.match(successMessage, /Current HTML report:\nhttps:\/\/reports\.example\.test\/rentcars\/afternoon\/report\.html\n$/);
 
   const morningSuccessMessage = execute({ withBody: true, reportProfile: "morning" });
   assert.equal((morningSuccessMessage.match(/RentCars\.pl: run finished/g) || []).length, 1);
-  assert.match(morningSuccessMessage, /Current HTML report:\nhttps:\/\/reports\.example\.test\/rentcars\/morning\/report\.html\n\nArtifact backup \(requires GitHub sign-in\):/);
+  assert.match(morningSuccessMessage, /Current HTML report:\nhttps:\/\/reports\.example\.test\/rentcars\/morning\/report\.html\n$/);
 
   const noJsonMessage = execute({ withBody: false });
   assert.equal((noJsonMessage.match(/RentCars\.pl: run finished/g) || []).length, 1);
   assert.match(noJsonMessage, /details unavailable; plan=success, scrape=success, merge=success/);
-  assert.match(noJsonMessage, /Current HTML report:\nhttps:\/\/reports\.example\.test\/rentcars\/afternoon\/report\.html\n\nArtifact backup \(requires GitHub sign-in\):/);
+  assert.match(noJsonMessage, /Current HTML report:\nhttps:\/\/reports\.example\.test\/rentcars\/afternoon\/report\.html\n$/);
+
+  for (const message of [successMessage, morningSuccessMessage, noJsonMessage]) {
+    assert.equal(linkCount(message), 1, "a published report sends exactly one link");
+    assert.doesNotMatch(message, /Artifact backup|GitHub Actions run|github\.test/);
+  }
 
   const pagesFailureMessage = execute({ withBody: true, pagesSiteAvailable: false });
+  assert.equal(linkCount(pagesFailureMessage), 0, "an unpublished report sends no links");
   assert.equal((pagesFailureMessage.match(/RentCars\.pl: run finished/g) || []).length, 1);
   assert.doesNotMatch(pagesFailureMessage, /report\.html/);
-  assert.match(pagesFailureMessage, /GitHub Pages deployment was not confirmed for this run\.\n\nArtifact backup \(requires GitHub sign-in\):/);
+  assert.match(pagesFailureMessage, /Raport nie trafił na stronę\. Napisz do agenta, żeby sprawdził i opublikował\.\n$/);
 
   const staleAttemptMessage = execute({ withBody: true, metadataAttempt: "1" });
   assert.equal((staleAttemptMessage.match(/RentCars\.pl: run finished/g) || []).length, 1);
   assert.doesNotMatch(staleAttemptMessage, /report\.html/);
-  assert.match(staleAttemptMessage, /GitHub Pages deployment was not confirmed for this run/);
+  assert.match(staleAttemptMessage, /Raport nie trafił na stronę/);
 
   for (const failure of [{ htmlStatus: "404" }, { htmlMarker: false }]) {
     const invalidHtmlMessage = execute({ withBody: true, ...failure });
     assert.doesNotMatch(invalidHtmlMessage, /report\.html/);
-    assert.match(invalidHtmlMessage, /GitHub Pages deployment was not confirmed for this run/);
+    assert.match(invalidHtmlMessage, /Raport nie trafił na stronę/);
   }
 });
 
-test("fresh metadata with modified stale HTML keeps the notification link-free after eight checks", () => {
-  const message = executeNotification({ withBody: true, staleHtml: true, expectedMetadataRequests: 8 });
+test("fresh metadata with modified stale HTML keeps the notification link-free after eighteen checks", () => {
+  const message = executeNotification({ withBody: true, staleHtml: true, expectedMetadataRequests: 18 });
   assert.doesNotMatch(message, /Current HTML report|report\.html/);
-  assert.match(message, /GitHub Pages deployment was not confirmed for this run\.\n\nArtifact backup \(requires GitHub sign-in\):/);
+  assert.match(message, /Raport nie trafił na stronę\. Napisz do agenta, żeby sprawdził i opublikował\.\n$/);
 });
 
 test("notification requires local artifact HTML and valid current run identity", () => {
   for (const options of [
     { localHtmlAvailable: false, expectedMetadataRequests: 0 },
-    { metadataRunId: "76", expectedMetadataRequests: 8 },
-    { malformedMetadata: true, expectedMetadataRequests: 8 }
+    { metadataRunId: "76", expectedMetadataRequests: 18 },
+    { malformedMetadata: true, expectedMetadataRequests: 18 }
   ]) {
     const message = executeNotification({ withBody: true, ...options });
     assert.doesNotMatch(message, /Current HTML report|report\.html/);
-    assert.match(message, /GitHub Pages deployment was not confirmed for this run\.\n\nArtifact backup \(requires GitHub sign-in\):/);
+    assert.match(message, /Raport nie trafił na stronę\. Napisz do agenta, żeby sprawdził i opublikował\.\n$/);
   }
 });
 
@@ -292,7 +297,6 @@ test("failed partial merge still notifies its real status and may link its exact
   assert.match(message, /run finished \(partial; 1\/2 scenarios; 1 successful, 0 failed, 1 missing \/ 2 checks/);
   assert.doesNotMatch(message, /run finished \(complete/);
   assert.match(message, /Current HTML report:/);
-  assert.match(message, /Artifact backup \(requires GitHub sign-in\):/);
 });
 
 function evaluateExpression(expression, context) {

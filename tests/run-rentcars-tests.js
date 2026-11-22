@@ -850,15 +850,15 @@ runTest("push smoke cannot deploy Pages or notify Telegram", () => {
   assert.doesNotMatch(smoke, /deploy-pages|Notify Telegram|github-pages/i);
 });
 
-runTest("daily Telegram message preserves blank lines between links", () => {
+runTest("daily Telegram message keeps a blank line before its only report link", () => {
   const daily = fs.readFileSync(".github/workflows/rentcars-daily.yml", "utf8");
 
   const formatter = fs.readFileSync("src/rentcars/dailyNotification.js", "utf8");
   assert.match(formatter, /RentCars\.pl: run finished/);
   assert.ok(daily.includes('profile_url="${pages_url}${REPORT_PROFILE}/"'));
   assert.ok(daily.includes('page_url="$profile_url"'));
-  assert.match(daily, /printf -v section '\\n\\nCurrent HTML report:\\n%sreport\.html\\n\\n'/);
-  assert.match(daily, /printf -v section 'Artifact backup \(requires GitHub sign-in\):\\n%s\\n\\n'/);
+  assert.match(daily, /printf -v section '\\n\\nCurrent HTML report:\\n%sreport\.html\\n'/);
+  assert.doesNotMatch(daily, /Artifact backup|GitHub Actions run:/);
   assert.doesNotMatch(daily, /message\+=\$\(printf/);
 });
 

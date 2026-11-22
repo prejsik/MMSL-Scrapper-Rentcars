@@ -592,7 +592,7 @@ jobs:
       - merge
     if: always() && (needs.plan.result != 'success' || needs.plan.outputs.should_run == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       actions: read
       contents: read
@@ -612,8 +612,6 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GITHUB_TOKEN: ${{ github.token }}
-          ARTIFACT_URL: ${{ needs.merge.outputs.artifact_url }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           PLAN_RESULT: ${{ needs.plan.result }}
           SCRAPE_RESULT: ${{ needs.scrape.result }}
           MERGE_RESULT: ${{ needs.merge.result }}
@@ -656,9 +654,12 @@ jobs:
             fi
           fi
 
+          # Publish runs in parallel and may retry its deployment after 60 s,
+          # so wait up to ~3 minutes for this run's report to appear on Pages.
+          max_checks=18
           if [[ -n "$pages_url" && -s notification-input/rentcars-report.html ]]; then
             profile_url="${pages_url}${REPORT_PROFILE}/"
-            for attempt in {1..8}; do
+            for ((attempt = 1; attempt <= max_checks; attempt++)); do
               rm -f "$metadata_path"
               if metadata_status=$(curl --silent --show-error --max-time 5 \
                 --output "$metadata_path" \
@@ -685,23 +686,18 @@ jobs:
                   fi
                 fi
               fi
-              if [[ "$attempt" -lt 8 ]]; then
+              if [[ "$attempt" -lt "$max_checks" ]]; then
                 sleep 10
               fi
             done
           fi
 
+          # The message carries only one link: the confirmed report on Pages.
           if [[ -n "$page_url" ]]; then
-            printf -v section '\n\nCurrent HTML report:\n%sreport.html\n\n' "$page_url"
+            printf -v section '\n\nCurrent HTML report:\n%sreport.html\n' "$page_url"
           else
-            printf -v section '\n\nGitHub Pages deployment was not confirmed for this run.\n\n'
+            printf -v section '\n\nRaport nie trafił na stronę. Napisz do agenta, żeby sprawdził i opublikował.\n'
           fi
-          message+="$section"
-          if [[ -n "$ARTIFACT_URL" ]]; then
-            printf -v section 'Artifact backup (requires GitHub sign-in):\n%s\n\n' "$ARTIFACT_URL"
-            message+="$section"
-          fi
-          printf -v section 'GitHub Actions run:\n%s\n' "$RUN_URL"
           message+="$section"
 
           curl --fail --show-error --silent \
