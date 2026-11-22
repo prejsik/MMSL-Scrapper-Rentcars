@@ -858,7 +858,7 @@ runTest("daily Telegram message preserves blank lines between links", () => {
   assert.ok(daily.includes('profile_url="${pages_url}${REPORT_PROFILE}/"'));
   assert.ok(daily.includes('page_url="$profile_url"'));
   assert.match(daily, /printf -v section '\\n\\nCurrent HTML report:\\n%sreport\.html\\n\\n'/);
-  assert.match(daily, /printf -v section 'Artifact backup:\\n%s\\n\\n'/);
+  assert.match(daily, /printf -v section 'Artifact backup \(requires GitHub sign-in\):\\n%s\\n\\n'/);
   assert.doesNotMatch(daily, /message\+=\$\(printf/);
 });
 
