@@ -74,6 +74,30 @@ test("morning status reports incomplete work with ETA, never today's old report"
   assert.ok(api.calls.filter(call => call.url.startsWith("https://reports.example")).every(call => !call.init.headers?.Authorization));
 });
 
+test("morning status is fully Polish, including GitHub states", async () => {
+  assert.equal(helper().describeRunState({ status: "in_progress", conclusion: null }), "w toku");
+  assert.equal(helper().describeRunState({ status: "completed", conclusion: "success" }), "zakończone – sukces");
+  assert.equal(helper().describeRunState({ status: "completed", conclusion: "failure" }), "zakończone – błąd");
+  const english = /\bETA\b|Status GitHub|HTML:|in_progress|completed|Europe\/Warsaw|GitHub Actions:\n|zakonczon|bledy|biezac|wiadomosc|Proba/;
+  const inProgress = await helper().collectMorningMessage({ ...options, ...mockApi({
+    jobs: [job(1, "completed"), job(2, "completed"), job(3, "in_progress", 5)]
+  }) });
+  assert.match(inProgress, /Stan na 07:00 \(czas polski\)\./);
+  assert.match(inProgress, /Próba: 2\. Stan: w toku\./);
+  assert.match(inProgress, /Paczki zakończone poprawnie: 2\/3\./);
+  assert.match(inProgress, /Szczegóły \(GitHub\):\nhttps:\/\/github\.com\/owner\/rentcars\/actions\/runs\/77$/);
+  assert.doesNotMatch(inProgress, english);
+  const published = await helper().collectMorningMessage({ ...options, ...mockApi({
+    runs: [run(77, { status: "completed", conclusion: "success" })],
+    jobs: [job(1, "completed")],
+    metadata: { run_id: "77", run_attempt: 2, run_status: "complete", expected_check_count: 9,
+      successful_check_count: 9, failed_check_count: 0, missing_check_count: 0 }
+  }) });
+  assert.match(published, /Stan: zakończone – sukces\./);
+  assert.match(published, /Raport:\nhttps:\/\/reports\.example\/rentcars\/morning\/report\.html/);
+  assert.doesNotMatch(published, english);
+});
+
 test("verified current report is linked with completeness counts and no ETA", async () => {
   const api = mockApi({ jobs: [job(1, "completed")], metadata: {
     run_id: "77", run_attempt: 2, run_status: "complete", expected_check_count: 9,
@@ -96,8 +120,8 @@ test("failed partial report does not invent a completion time", async () => {
   const message = await helper().collectMorningMessage({ ...options, ...api });
   assert.match(message, /Raport niekompletny/);
   assert.match(message, /4\/9/);
-  assert.match(message, /Uruchomienie zakonczone/);
-  assert.doesNotMatch(message, /Po zakonczeniu|Szacowany czas/);
+  assert.match(message, /Uruchomienie zakończone/);
+  assert.doesNotMatch(message, /Po zakończeniu|Szacowany czas/);
 });
 
 test("no morning run today never reports a daytime, old or manual run as today's result", async () => {
@@ -193,7 +217,7 @@ test("send step previews without sending and sends fallback after inspection fai
       assert.equal(fs.existsSync(captured), send);
       if (send) {
         const args = fs.readFileSync(captured, "utf8");
-        assert.match(args, outcome === "success" ? /Verified test status/ : /Nie udalo sie odczytac/);
+        assert.match(args, outcome === "success" ? /Verified test status/ : /Nie udało się odczytać/);
         assert.match(args, /--output\n\/dev\/null/);
       }
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
@@ -203,7 +227,7 @@ test("send step previews without sending and sends fallback after inspection fai
 test("finished collection awaiting publication does not pretend to be scraping", async () => {
   const api = mockApi({ jobs: [job(1, "completed"), job(2, "completed")] });
   const message = await helper().collectMorningMessage({ ...options, ...api });
-  assert.match(message, /Zbieranie danych zakonczone/);
-  assert.match(message, /scalenie i publikacje/);
+  assert.match(message, /Zbieranie danych zakończone/);
+  assert.match(message, /scalenie i publikację/);
   assert.doesNotMatch(message, /Szacowany czas do konca zbierania/);
 });
