@@ -4,7 +4,7 @@ Ten plik czytają oba narzędzia; `CLAUDE.md` tylko go importuje. Repozytorium j
 
 ## Co uruchamia scalenie
 
-- Automaty startują z `main`: „RentCars daily run” (10:17 i 19:17), „RentCars morning status” (7:00) i „RentCars daily watchdog”. Publikują raport na GitHub Pages i wysyłają podsumowanie na Telegram. Scalona zmiana działa od najbliższego przebiegu.
+- Automaty startują z `main`: „RentCars daily run” (10:17 i 19:17) i „RentCars daily watchdog”. „RentCars morning status” działa tylko na ręczne uruchomienie. Publikują raport na GitHub Pages i wysyłają podsumowanie na Telegram. Scalona zmiana działa od najbliższego przebiegu.
 - `gh workflow run` uruchamiaj tylko na wyraźną prośbę.
 
 ## Testy

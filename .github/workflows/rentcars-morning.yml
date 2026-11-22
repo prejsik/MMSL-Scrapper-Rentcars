@@ -1,9 +1,9 @@
 name: RentCars morning status
 
+# Automatic 07:00 sending is disabled: GitHub delayed it to the afternoon and
+# the end-of-run Telegram message already reports the result. Run it manually
+# (optionally with send_notification) when a progress snapshot is needed.
 on:
-  schedule:
-    - cron: "0 7 * * *"
-      timezone: "Europe/Warsaw"
   workflow_dispatch:
     inputs:
       send_notification:
@@ -51,7 +51,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          SEND_NOTIFICATION: ${{ github.event_name == 'schedule' || inputs.send_notification == true }}
+          SEND_NOTIFICATION: ${{ inputs.send_notification == true }}
           STATUS_OUTCOME: ${{ steps.status.outcome }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |

@@ -19,12 +19,16 @@ const run = (id = 77, overrides = {}) => ({
 });
 const options = { repository: "owner/rentcars", defaultBranch: "main", token: "test-token", now };
 
-test("morning schedule uses 07:00 Warsaw and cannot trigger scraping or publishing", () => {
+test("morning status runs only on demand and cannot trigger scraping or publishing", () => {
   const file = path.resolve(__dirname, "../.github/workflows/rentcars-morning.yml");
   assert.ok(fs.existsSync(file), "morning workflow must exist");
   const source = fs.readFileSync(file, "utf8");
   const workflow = yaml.parse(source);
-  assert.deepEqual(workflow.on.schedule, [{ cron: "0 7 * * *", timezone: "Europe/Warsaw" }]);
+  assert.equal(workflow.on.schedule, undefined, "automatic 07:00 status is disabled");
+  assert.deepEqual(Object.keys(workflow.on), ["workflow_dispatch"]);
+  assert.equal(workflow.on.workflow_dispatch.inputs.send_notification.default, false);
+  const send = workflow.jobs.notify.steps.find((step) => step.name === "Send or preview morning message");
+  assert.equal(send.env.SEND_NOTIFICATION, "${{ inputs.send_notification == true }}");
   assert.deepEqual(workflow.permissions, { actions: "read", contents: "read", pages: "read" });
   assert.equal(workflow.jobs.notify.environment, undefined);
   assert.doesNotMatch(source, /deploy-pages|\/dispatches|\/rerun|node src\/rentcars\/run\.js/);
