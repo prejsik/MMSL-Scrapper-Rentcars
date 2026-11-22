@@ -58,7 +58,7 @@ jobs:
           if [[ "$STATUS_OUTCOME" == "success" && -s "$RUNNER_TEMP/rentcars-morning.txt" ]]; then
             message=$(<"$RUNNER_TEMP/rentcars-morning.txt")
           else
-            printf -v message 'RentCars.pl: status poranny 07:00.\n\nNie udalo sie odczytac biezacego postepu. ETA niedostepne; nie potwierdzono aktualnosci raportu.\n\nDiagnostyka:\n%s\n' "$RUN_URL"
+            printf -v message 'RentCars.pl: status poranny 07:00.\n\nNie udało się odczytać bieżącego postępu. Szacowany czas niedostępny; nie potwierdzono aktualności raportu.\n\nSzczegóły (GitHub):\n%s\n' "$RUN_URL"
           fi
           printf '%s\n' "$message" >> "$GITHUB_STEP_SUMMARY"
           if [[ "$SEND_NOTIFICATION" != "true" ]]; then

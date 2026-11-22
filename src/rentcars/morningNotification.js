@@ -7,6 +7,16 @@ const isScrape = (job) => String(job?.name || "").startsWith("Scrape chunk ");
 const finished = (job) => job.status === "completed";
 const successful = (job) => finished(job) && job.conclusion === "success";
 
+const RUN_STATUS_LABELS = { queued: "w kolejce", waiting: "oczekuje", pending: "oczekuje", requested: "w kolejce", in_progress: "w toku", completed: "zakończone" };
+const RUN_CONCLUSION_LABELS = { success: "sukces", failure: "błąd", cancelled: "anulowane", timed_out: "przekroczony czas", skipped: "pominięte", action_required: "wymaga działania", neutral: "bez wyniku", stale: "nieaktualne" };
+
+/** Describes a GitHub run status and conclusion in Polish, e.g. "zakończone – sukces". */
+function describeRunState(run) {
+  const status = RUN_STATUS_LABELS[run?.status] || String(run?.status || "nieznany");
+  if (!run?.conclusion) return status;
+  return `${status} – ${RUN_CONCLUSION_LABELS[run.conclusion] || String(run.conclusion)}`;
+}
+
 function warsawDate(time) {
   return new Intl.DateTimeFormat("en-CA", { timeZone: TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(time));
 }
@@ -55,7 +65,7 @@ async function collectMorningMessage({ repository, defaultBranch, token, now = D
   };
   const date = warsawDate(now);
   const cycleDate = primaryRunCycleDate(now);
-  const header = `RentCars.pl: status poranny 07:00 | ${date}\nStan na ${new Intl.DateTimeFormat("pl-PL", { timeZone: TIME_ZONE, hour: "2-digit", minute: "2-digit" }).format(new Date(now))} (${TIME_ZONE}).`;
+  const header = `RentCars.pl: status poranny 07:00 | ${date}\nStan na ${new Intl.DateTimeFormat("pl-PL", { timeZone: TIME_ZONE, hour: "2-digit", minute: "2-digit" }).format(new Date(now))} (czas polski).`;
   const payload = await api(`actions/workflows/rentcars-daily.yml/runs?branch=${encodeURIComponent(defaultBranch)}&per_page=100`);
   const runs = (payload.workflow_runs || []).filter((run) =>
     isTrustedDailyRun(run, { repository, defaultBranch })
@@ -81,15 +91,15 @@ async function collectMorningMessage({ repository, defaultBranch, token, now = D
     if (!hasWork && run.status === "completed" && run.conclusion === "success") continue;
     selected = run; jobs = collected; break;
   }
-  if (!selected) return `${header}\n\nBrak uruchomienia dla cyklu raportu ${cycleDate} (start o 19:17 poprzedniego dnia).\nETA: nie mozna oszacowac przed startem.\n\nGitHub Actions:\n${serverUrl}/${repository}/actions/workflows/rentcars-daily.yml`;
+  if (!selected) return `${header}\n\nBrak uruchomienia dla cyklu raportu ${cycleDate} (start o 19:17 poprzedniego dnia).\nSzacowany czas: nie można oszacować przed startem.\n\nSzczegóły (GitHub):\n${serverUrl}/${repository}/actions/workflows/rentcars-daily.yml`;
   const runUrl = `${serverUrl}/${repository}/actions/runs/${selected.id}`;
   const chunks = jobs.filter(isScrape);
   const successCount = chunks.filter(successful).length;
   const failedCount = chunks.filter((job) => finished(job) && job.conclusion !== "success" && job.conclusion !== "skipped").length;
   const runningCount = chunks.filter((job) => job.status === "in_progress").length;
   const waitingCount = chunks.filter((job) => !finished(job) && job.status !== "in_progress").length;
-  const sections = [header, `Proba: ${selected.run_attempt || 1}. Status GitHub: ${selected.status}${selected.conclusion ? ` / ${selected.conclusion}` : ""}.`,
-    `Paczki zakonczone poprawnie: ${successCount}/${chunks.length}. W toku: ${runningCount}; oczekuje: ${waitingCount}; bledy: ${failedCount}.\nTo postep paczek, nie dokladny procent sprawdzonych ofert.`];
+  const sections = [header, `Próba: ${selected.run_attempt || 1}. Stan: ${describeRunState(selected)}.`,
+    `Paczki zakończone poprawnie: ${successCount}/${chunks.length}. W toku: ${runningCount}; oczekuje: ${waitingCount}; błędy: ${failedCount}.\nTo postęp paczek, nie dokładny procent sprawdzonych ofert.`];
   let report = null;
   try {
     const site = await api("pages");
@@ -118,25 +128,25 @@ async function collectMorningMessage({ repository, defaultBranch, token, now = D
     && report.successful_check_count === report.expected_check_count
     && report.failed_check_count === 0 && report.missing_check_count === 0;
   if (report) {
-    sections.push(`${complete ? "Raport kompletny" : "Raport niekompletny"}. Sprawdzenia poprawne: ${report.successful_check_count}/${report.expected_check_count}; bledy: ${report.failed_check_count}; brakujace: ${report.missing_check_count}.\n\nHTML:\n${report.url}`);
+    sections.push(`${complete ? "Raport kompletny" : "Raport niekompletny"}. Sprawdzenia poprawne: ${report.successful_check_count}/${report.expected_check_count}; błędy: ${report.failed_check_count}; brakujące: ${report.missing_check_count}.\n\nRaport:\n${report.url}`);
   } else {
-    sections.push("Publikacja HTML biezacej proby nie jest jeszcze potwierdzona.");
+    sections.push("Publikacja raportu z bieżącej próby nie jest jeszcze potwierdzona.");
   }
   if (!complete) {
     if (selected.status === "completed") {
-      sections.push("Uruchomienie zakonczone, ale kompletny opublikowany raport nie jest potwierdzony. ETA nie dotyczy zakonczonej proby; sprawdz diagnostyke w GitHub Actions.");
+      sections.push("Uruchomienie zakończone, ale kompletny opublikowany raport nie jest potwierdzony. Sprawdź szczegóły w GitHub Actions.");
     } else {
       if (chunks.length > 0 && chunks.every(finished)) {
-        sections.push("Zbieranie danych zakonczone. Oczekiwanie na scalenie i publikacje; ETA tego etapu niedostepne.");
+        sections.push("Zbieranie danych zakończone. Oczekiwanie na scalenie i publikację; czasu tego etapu nie da się oszacować.");
       } else {
         const eta = estimateRemaining(jobs, { now, concurrency });
-        if (eta) sections.push(`Szacowany czas do konca zbierania: ${eta.lowMinutes}-${eta.highMinutes} min.\nPrzy obecnym tempie, bez dodatkowych kolejek i ponowien. Scalenie i publikacja moga wydluzyc ten czas.`);
-        else sections.push("ETA: nie mozna jeszcze wiarygodnie oszacowac (kolejka, blad lub zbyt malo zakonczonych paczek).");
+        if (eta) sections.push(`Szacowany czas do końca zbierania: ${eta.lowMinutes}–${eta.highMinutes} min.\nPrzy obecnym tempie, bez dodatkowych kolejek i ponowień. Scalenie i publikacja mogą wydłużyć ten czas.`);
+        else sections.push("Szacowany czas: nie można jeszcze wiarygodnie oszacować (kolejka, błąd lub zbyt mało zakończonych paczek).");
       }
-      sections.push("Po zakonczeniu pozostaje wlaczona osobna wiadomosc z wynikiem.");
+      sections.push("Po zakończeniu przyjdzie osobna wiadomość z wynikiem.");
     }
   }
-  sections.push(`GitHub Actions:\n${runUrl}`);
+  sections.push(`Szczegóły (GitHub):\n${runUrl}`);
   return sections.join("\n\n");
 }
 
@@ -151,4 +161,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { warsawDate, estimateRemaining, collectMorningMessage };
+module.exports = { warsawDate, describeRunState, estimateRemaining, collectMorningMessage };
