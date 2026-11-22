@@ -209,6 +209,98 @@ test("morning classification ignores the daytime profile", async () => {
   });
 });
 
+const OVH_NIGHT = { event: "workflow_dispatch", display_title: "RentCars daily run (OVH)" };
+const OVH_DAYTIME = { event: "workflow_dispatch", display_title: "RentCars daytime run (OVH)" };
+
+test("OVH and delayed GitHub starts of the same slot share one slot key", () => {
+  const { scheduledSlotKey } = require("../src/rentcars/watchdog");
+  // 19:17 Warsaw by OVH and 00:23 Warsaw by the delayed GitHub schedule both serve the 23 Nov morning report.
+  assert.equal(scheduledSlotKey(trustedRun({ ...OVH_NIGHT, created_at: "2026-11-22T18:17:03Z" })), "night:2026-11-23");
+  assert.equal(scheduledSlotKey(trustedRun({ created_at: "2026-11-22T23:23:26Z" })), "night:2026-11-23");
+  // Summer time: 19:17 Warsaw is 17:17 UTC.
+  assert.equal(scheduledSlotKey(trustedRun({ ...OVH_NIGHT, created_at: "2026-07-15T17:17:02Z" })), "night:2026-07-16");
+  assert.equal(scheduledSlotKey(trustedRun({ ...OVH_DAYTIME, created_at: "2026-11-23T09:17:02Z" })), "daytime:2026-11-23");
+  assert.equal(scheduledSlotKey(trustedRun({ display_title: "RentCars daytime run", created_at: "2026-11-23T16:49:37Z" })),
+    "daytime:2026-11-23");
+  assert.equal(scheduledSlotKey(trustedRun({ event: "workflow_dispatch", display_title: "RentCars daily run" })), null);
+  assert.equal(scheduledSlotKey(trustedRun({ event: "workflow_dispatch", display_title: "RentCars watchdog recovery" })), null);
+});
+
+test("a delayed GitHub schedule run skips a slot the OVH timer already started, never the reverse", () => {
+  const { findEarlierSlotClaim } = require("../src/rentcars/watchdog");
+  const ovhNight = trustedRun({ ...OVH_NIGHT, id: 900, created_at: "2026-11-22T18:17:03Z", conclusion: "success" });
+  const githubNight = trustedRun({ id: 901, created_at: "2026-11-22T23:23:26Z", status: "in_progress", conclusion: null });
+  const ovhDaytime = trustedRun({ ...OVH_DAYTIME, id: 902, created_at: "2026-11-23T09:17:02Z" });
+  const githubDaytime = trustedRun({ id: 903, display_title: "RentCars daytime run", created_at: "2026-11-23T16:49:37Z" });
+  const runs = [ovhNight, githubNight, ovhDaytime, githubDaytime];
+
+  assert.equal(findEarlierSlotClaim(githubNight, runs, trustOptions)?.id, 900);
+  assert.equal(findEarlierSlotClaim(ovhNight, runs, trustOptions), null);
+  assert.equal(findEarlierSlotClaim(githubDaytime, runs, trustOptions)?.id, 902);
+  assert.equal(findEarlierSlotClaim(ovhDaytime, runs, trustOptions), null, "the night slot never claims the daytime slot");
+  // A retried OVH start (duplicate dispatch) also yields to the first one.
+  const ovhRetry = trustedRun({ ...OVH_NIGHT, id: 904, created_at: "2026-11-22T18:18:05Z" });
+  assert.equal(findEarlierSlotClaim(ovhRetry, [...runs, ovhRetry], trustOptions)?.id, 900);
+  // OVH down: the delayed GitHub run is the first trusted run and collects.
+  assert.equal(findEarlierSlotClaim(githubNight, [githubNight], trustOptions), null);
+  // Untrusted or manual runs never claim a slot.
+  for (const untrusted of [
+    { ...ovhNight, head_branch: "feature" },
+    { ...ovhNight, head_repository: { full_name: "fork/rentcars" } },
+    { ...ovhNight, display_title: "RentCars daily run" },
+    { ...ovhNight, event: "workflow_dispatch", display_title: "RentCars watchdog recovery" }
+  ]) {
+    assert.equal(findEarlierSlotClaim(githubNight, [untrusted, githubNight], trustOptions), null, JSON.stringify(untrusted));
+  }
+  // The previous evening's slot belongs to another report cycle.
+  const previousNight = trustedRun({ ...OVH_NIGHT, id: 905, created_at: "2026-11-21T18:17:03Z" });
+  assert.equal(findEarlierSlotClaim(githubNight, [previousNight, githubNight], trustOptions), null);
+});
+
+test("watchdog trusts OVH slot runs like scheduled runs and ignores skipped duplicates", async () => {
+  const ovhFailure = await enrich(trustedRun({ ...OVH_NIGHT, id: 910, created_at: "2026-09-26T17:17:03Z" }),
+    dailyJobs({ scrape: "failure", merge: "skipped" }));
+  const skippedDuplicate = trustedRun({ id: 911, created_at: "2026-09-26T23:23:00Z", conclusion: "success",
+    has_scrape_jobs: false });
+  assert.deepEqual(decideCompletedRunRecovery(ovhFailure, [ovhFailure, skippedDuplicate], trustOptions),
+    { action: "rerun", runId: 910, runAttempt: 1 });
+  assert.deepEqual(scheduledDecision([ovhFailure, skippedDuplicate]), { action: "rerun", runId: 910, runAttempt: 1 });
+
+  const ovhSuccess = { ...ovhFailure, conclusion: "success", has_scrape_jobs: true, core_jobs_succeeded: true };
+  assert.deepEqual(scheduledDecision([ovhSuccess, skippedDuplicate]), { action: "none", runId: 910, runAttempt: 1 });
+
+  const ovhDaytimeActive = trustedRun({ ...OVH_DAYTIME, id: 912, status: "in_progress", conclusion: null,
+    created_at: "2026-09-27T04:00:00.000Z", has_scrape_jobs: true });
+  assert.deepEqual(decideCompletedRunRecovery(ovhFailure, [ovhFailure, ovhDaytimeActive], trustOptions),
+    { action: "rerun", runId: 910, runAttempt: 1 }, "the daytime OVH slot does not block night recovery");
+});
+
+test("watchdog completion gate trusts only schedule, recovery and OVH slot titles", () => {
+  const watchdogWorkflow = yaml.parse(fs.readFileSync(path.join(ROOT, ".github/workflows/rentcars-watchdog.yml"), "utf8"));
+  const gate = watchdogWorkflow.jobs.watchdog.steps.find((step) => step.id === "gate");
+  const cases = [
+    ["schedule", "RentCars daily run", true],
+    ["workflow_dispatch", "RentCars watchdog recovery", true],
+    ["workflow_dispatch", "RentCars daily run (OVH)", true],
+    ["workflow_dispatch", "RentCars daytime run (OVH)", true],
+    ["workflow_dispatch", "RentCars daily run", false],
+    ["pull_request", "RentCars daily run (OVH)", false]
+  ];
+  for (const [event, title, expected] of cases) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rentcars-watchdog-gate-"));
+    try {
+      const output = path.join(dir, "output.txt");
+      const result = spawnSync("bash", ["-eo", "pipefail", "-c", gate.run], { encoding: "utf8", env: {
+        ...process.env, GITHUB_OUTPUT: output, GITHUB_REPOSITORY: "mmcars/rentcars", EVENT_NAME: "workflow_run",
+        DEFAULT_BRANCH: "main", SOURCE_EVENT: event, SOURCE_STATUS: "completed", SOURCE_CONCLUSION: "failure",
+        SOURCE_REPOSITORY: "mmcars/rentcars", SOURCE_BRANCH: "main", SOURCE_TITLE: title
+      } });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(fs.readFileSync(output, "utf8").trim(), `should_run=${expected}`, `${event} ${title}`);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  }
+});
+
 test("current or newer relevant job-evidence errors fail closed", async () => {
   const coreFailure = await enrich(trustedRun(), dailyJobs({ scrape: "failure", merge: "skipped" }));
   const currentInspectionFailure = {

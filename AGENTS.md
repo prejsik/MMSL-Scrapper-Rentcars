@@ -4,7 +4,8 @@ Ten plik czytają oba narzędzia; `CLAUDE.md` tylko go importuje. Repozytorium j
 
 ## Co uruchamia scalenie
 
-- Automaty startują z `main`: „RentCars daily run” (10:17 i 19:17) i „RentCars daily watchdog”. „RentCars morning status” działa tylko na ręczne uruchomienie. Publikują raport na GitHub Pages i wysyłają podsumowanie na Telegram. Scalona zmiana działa od najbliższego przebiegu.
+- Automaty startują z `main`: „RentCars daily run” (10:17 i 19:17) i „RentCars daily watchdog”. „RentCars morning status” działa tylko na ręczne uruchomienie.
+- Punktualny start 10:17 i 19:17 dają timery systemd na serwerze OVH (`ops/ovh/`, instalacja `ops/ovh/install.sh`). Harmonogram GitHuba (opóźniony o kilka godzin) zostaje jako zapas; drugi start tej samej pory kończy się bez scrapowania. Zmiana plików w `ops/ovh/` działa dopiero po ponownym `ops/ovh/install.sh` na serwerze. Publikują raport na GitHub Pages i wysyłają podsumowanie na Telegram. Scalona zmiana działa od najbliższego przebiegu.
 - `gh workflow run` uruchamiaj tylko na wyraźną prośbę.
 
 ## Testy

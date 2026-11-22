@@ -343,78 +343,156 @@ test("daily schedule retains 60 rolling dates and durations 2 through 14", () =>
   assert.equal(inputs.durations.default, "2,3,4,5,6,7,8,9,10,11,12,13,14");
 });
 
-test("19:17 and 10:17 Warsaw schedules retain separate date horizons, reports and Telegram secrets", () => {
+test("19:17 and 10:17 slots keep separate horizons, titles and reports whether GitHub or OVH starts them", () => {
   const daily = workflow(".github/workflows/rentcars-daily.yml");
+  const watchdog = require("../src/rentcars/watchdog");
   assert.deepEqual(daily.on.schedule, [
     { cron: "17 19 * * *", timezone: "Europe/Warsaw" },
     { cron: "17 10 * * *", timezone: "Europe/Warsaw" }
   ]);
+  const slotInput = daily.on.workflow_dispatch.inputs.scheduled_slot;
+  assert.deepEqual(slotInput.options, ["none", "night", "daytime"]);
+  assert.equal(slotInput.default, "none");
   assert.equal(daily.env.SCHEDULE_DAYTIME_ROLLING_DAYS, "20");
-  assert.equal(daily.env.REPORT_PROFILE, "${{ github.event_name == 'schedule' && github.event.schedule == '17 10 * * *' && 'afternoon' || 'morning' }}");
-  assert.equal(daily["run-name"], "${{ github.event_name == 'schedule' && github.event.schedule == '17 10 * * *' && 'RentCars daytime run' || inputs.watchdog_recovery == 'true' && 'RentCars watchdog recovery' || 'RentCars daily run' }}");
+  const cases = [
+    ["schedule", "17 10 * * *", {}, "RentCars daytime run", "daytime", "afternoon"],
+    ["schedule", "17 19 * * *", {}, "RentCars daily run", "night", "morning"],
+    ["schedule", "17 0 * * *", {}, "RentCars daily run", "", "morning"],
+    ["workflow_dispatch", "", { scheduled_slot: "daytime" }, watchdog.OVH_DAYTIME_RUN_TITLE, "daytime", "afternoon"],
+    ["workflow_dispatch", "", { scheduled_slot: "night" }, watchdog.OVH_NIGHT_RUN_TITLE, "night", "morning"],
+    ["workflow_dispatch", "", { scheduled_slot: "none" }, "RentCars daily run", "", "morning"],
+    ["workflow_dispatch", "", { scheduled_slot: "none", watchdog_recovery: "true" }, "RentCars watchdog recovery", "", "morning"]
+  ];
+  for (const [eventName, cron, inputs, title, slot, profile] of cases) {
+    const context = { github: { event_name: eventName, event: { schedule: cron } }, inputs };
+    const label = `${eventName} ${cron} ${JSON.stringify(inputs)}`;
+    assert.equal(evaluateExpression(daily["run-name"], context), title, label);
+    assert.equal(evaluateExpression(daily.env.RUN_SLOT, context), slot, label);
+    assert.equal(evaluateExpression(daily.env.REPORT_PROFILE, context), profile, label);
+  }
   const send = daily.jobs.notify.steps.find(step => step.name === "Send Telegram notification");
   assert.equal(send.env.TELEGRAM_BOT_TOKEN, "${{ secrets.TELEGRAM_BOT_TOKEN }}");
   assert.equal(send.env.TELEGRAM_CHAT_ID, "${{ secrets.TELEGRAM_CHAT_ID }}");
 });
 
-test("schedule gate and matrix retain day, night, retry and manual date ranges", () => {
+test("schedule gate skips slots already started and keeps day, night, retry and manual date ranges", () => {
   const daily = workflow(".github/workflows/rentcars-daily.yml");
-  const gate = daily.jobs.plan.steps.find(step => step.id === "gate");
-  const options = daily.jobs.plan.steps.find(step => step.id === "options");
-  assert.equal(options.env.EVENT_NAME, "${{ github.event_name }}");
-  assert.equal(options.env.TRIGGER_SCHEDULE, "${{ github.event.schedule }}");
+  const steps = daily.jobs.plan.steps;
+  const gate = steps.find(step => step.id === "gate");
+  const options = steps.find(step => step.id === "options");
+  assert.ok(steps.findIndex(step => step.uses === "actions/checkout@v4") < steps.indexOf(gate));
+  assert.equal(gate.env.GH_TOKEN, "${{ github.token }}");
   assert.equal(options.env.RUN_CREATED_AT, "${{ steps.original_run.outputs.created_at }}");
-  const original = daily.jobs.plan.steps.find(step => step.id === "original_run");
-  assert.equal(original.if, "steps.gate.outputs.should_run == 'true' && github.event_name == 'schedule'");
+  const original = steps.find(step => step.id === "original_run");
+  assert.equal(original.if, "steps.gate.outputs.should_run == 'true' && env.RUN_SLOT != ''");
   assert.match(original.run, /actions\/runs\/\$\{GITHUB_RUN_ID\}/);
   const bash = process.platform === "win32" ? "C:/Program Files/Git/bin/bash.exe" : "bash";
+  const repo = "mmcars/rentcars";
+  const ghRun = (id, event, title, createdAt) => ({ id, event, display_title: title, created_at: createdAt,
+    status: "completed", conclusion: "success", head_branch: "main",
+    head_repository: { full_name: repo }, repository: { full_name: repo } });
+  // Each case: event, slot, created date, earlier runs, gh failure, should_run, days, rolling_days input.
   const cases = [
-    ["schedule", "17 10 * * *", "2026-07-15", true, 20, ""],
-    ["schedule", "17 10 * * *", "2026-12-15", true, 20, ""],
-    ["schedule", "17 19 * * *", "2026-07-15", true, 60, ""],
-    ["schedule", "17 19 * * *", "2026-12-15", true, 60, ""],
-    ["schedule", "17 0 * * *", "2026-07-15", false, 0, ""],
-    ["schedule", "17 23 * * *", "2026-12-15", false, 0, ""],
-    ["workflow_dispatch", "", "2026-07-15", true, 7, "7"]
+    ["schedule", "daytime", "2026-07-15", [], false, true, 20, ""],
+    ["schedule", "daytime", "2026-12-15", [], false, true, 20, ""],
+    ["schedule", "night", "2026-07-15", [], false, true, 60, ""],
+    ["schedule", "night", "2026-12-15", [], false, true, 60, ""],
+    ["schedule", "", "2026-07-15", [], false, false, 0, ""],
+    ["workflow_dispatch", "", "2026-07-15", [], false, true, 7, "7"],
+    ["workflow_dispatch", "daytime", "2026-07-15", [], false, true, 20, "60"],
+    ["schedule", "night", "2026-07-15",
+      [ghRun(40, "workflow_dispatch", "RentCars daily run (OVH)", "2026-07-15T17:17:02Z")], false, false, 0, ""],
+    ["schedule", "daytime", "2026-07-15",
+      [ghRun(40, "workflow_dispatch", "RentCars daily run (OVH)", "2026-07-15T17:17:02Z")], false, true, 20, ""],
+    ["schedule", "night", "2026-07-15",
+      [ghRun(40, "workflow_dispatch", "RentCars daily run", "2026-07-15T17:17:02Z")], false, true, 60, ""],
+    ["schedule", "night", "2026-07-15", [], true, true, 60, ""]
   ];
-  for (const [event, cron, date, shouldRun, expectedDays, inputDays] of cases) {
+  for (const [event, slot, date, earlierRuns, ghFails, shouldRun, expectedDays, inputDays] of cases) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rentcars-schedule-"));
+    const label = `${date}: ${event} ${slot || "manual"} after ${earlierRuns.map(run => run.display_title).join(", ") || "nothing"}${ghFails ? " (API down)" : ""}`;
     try {
       const output = path.join(dir, "output.txt").replace(/\\/g, "/");
-      const interpolate = (source) => source.replaceAll("${{ github.event.schedule }}", cron)
-        .replaceAll("${{ github.event_name }}", event)
+      const createdAt = `${date}T22:23:00Z`;
+      const current = ghRun(41, event, slot === "daytime" && event === "schedule" ? "RentCars daytime run"
+        : slot === "daytime" ? "RentCars daytime run (OVH)" : slot === "night" && event !== "schedule"
+          ? "RentCars daily run (OVH)" : "RentCars daily run", createdAt);
+      current.status = "in_progress"; current.conclusion = null;
+      const bashEnv = path.join(dir, "bash-env.sh");
+      fs.writeFileSync(bashEnv, [
+        "gh() {",
+        "  if [[ -n \"$MOCK_GH_FAIL\" ]]; then return 1; fi",
+        "  if [[ \"$2\" == */actions/runs/* ]]; then printf '%s' \"$MOCK_CURRENT_RUN\"; else printf '%s' \"$MOCK_RUNS\"; fi",
+        "}",
+        "export -f gh"
+      ].join("\n"));
+      const allRuns = [current, ...earlierRuns];
+      const interpolate = (source) => source.replaceAll("${{ github.event_name }}", event)
         .replaceAll("${{ steps.gate.outputs.should_run }}", String(shouldRun));
-      const env = { ...process.env, ...daily.env, GITHUB_OUTPUT: output, GITHUB_RUN_ATTEMPT: "2",
-        EVENT_NAME: event, TRIGGER_SCHEDULE: cron, INPUT_ROLLING_DAYS: inputDays,
-        RUN_CREATED_AT: `${date}T17:17:00Z`,
+      const env = { ...process.env, ...daily.env, RUN_SLOT: slot, GITHUB_OUTPUT: output, GITHUB_RUN_ATTEMPT: "2",
+        GITHUB_RUN_ID: "41", GITHUB_REPOSITORY: repo, DEFAULT_BRANCH: "main", BASH_ENV: bashEnv.replace(/\\/g, "/"),
+        MOCK_GH_FAIL: ghFails ? "1" : "", MOCK_CURRENT_RUN: JSON.stringify(current),
+        MOCK_RUNS: JSON.stringify({ total_count: allRuns.length, workflow_runs: allRuns }),
+        INPUT_ROLLING_DAYS: inputDays, RUN_CREATED_AT: createdAt,
         INPUT_LOCATIONS: "", INPUT_DURATIONS: "", INPUT_SPEED_MODE: "",
         INPUT_SORT_ORDERS: "", INPUT_LOCATION_CONCURRENCY: "" };
+      delete env.REPORT_PROFILE;
       const gateResult = spawnSync(bash, ["-eo", "pipefail", "-c", interpolate(gate.run)],
         { cwd: ROOT, env, encoding: "utf8" });
       assert.equal(gateResult.status, 0, gateResult.stderr);
-      assert.match(fs.readFileSync(output, "utf8"), new RegExp(`should_run=${shouldRun}`), `${date}: ${event} ${cron}`);
-      // The full matrix is exercised once per profile; winter uses the same cron identity.
+      assert.match(fs.readFileSync(output, "utf8"), new RegExp(`should_run=${shouldRun}`), label);
+      if (ghFails) assert.match(gateResult.stdout, /::warning::Could not check earlier runs/);
       if (date === "2026-12-15") continue;
       const result = spawnSync(bash, ["-eo", "pipefail", "-c", interpolate(options.run)], { cwd: ROOT, env, encoding: "utf8" });
       assert.equal(result.status, 0, result.stderr);
       const values = Object.fromEntries(fs.readFileSync(output, "utf8").trim().split(/\r?\n/).map(line => {
         const index = line.indexOf("="); return [line.slice(0, index), line.slice(index + 1)];
       }));
-      assert.equal(Number(values.rolling_days), expectedDays);
+      assert.equal(Number(values.rolling_days), expectedDays, label);
       assert.equal(Number(values.expected_scenario_count), expectedDays * 13);
       assert.equal(Number(values.expected_check_count), expectedDays * 13 * 10);
       if (shouldRun) {
         assert.ok(values.locations.split(",").includes("Szczecin"));
         assert.equal(values.start_dates.split(",").length, expectedDays);
-        if (event === "schedule") {
+        if (slot) {
+          // Created 00:23 Warsaw the next day: the night slot keeps its report-cycle date,
+          // the daytime slot starts on the following day.
           const firstDate = new Date(`${date}T12:00:00Z`);
-          firstDate.setUTCDate(firstDate.getUTCDate() + 1);
-          assert.equal(values.start_dates.split(",")[0], firstDate.toISOString().slice(0, 10));
+          firstDate.setUTCDate(firstDate.getUTCDate() + (slot === "night" ? 1 : 2));
+          assert.equal(values.start_dates.split(",")[0], firstDate.toISOString().slice(0, 10), label);
         }
         assert.equal(JSON.parse(values.matrix).include.length, Math.ceil(expectedDays / 3));
       }
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   }
+});
+
+test("OVH timers start both slots on time in Warsaw time with the workflow's slot names", () => {
+  const ops = path.join(ROOT, "ops/ovh");
+  const daily = workflow(".github/workflows/rentcars-daily.yml");
+  for (const [slot, time] of [["night", "19:17"], ["daytime", "10:17"]]) {
+    const timer = fs.readFileSync(path.join(ops, `rentcars-trigger-${slot}.timer`), "utf8");
+    assert.match(timer, new RegExp(`^OnCalendar=\\*-\\*-\\* ${time}:00 Europe/Warsaw$`, "m"));
+    assert.match(timer, new RegExp(`^Unit=rentcars-trigger@${slot}\\.service$`, "m"));
+    assert.ok(daily.on.workflow_dispatch.inputs.scheduled_slot.options.includes(slot));
+  }
+  assert.match(fs.readFileSync(path.join(ops, "rentcars-trigger@.service"), "utf8"), /^ExecStart=%h\/\.local\/bin\/rentcars-trigger %i$/m);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rentcars-ovh-"));
+  try {
+    const argsPath = path.join(dir, "args.txt");
+    fs.writeFileSync(path.join(dir, "gh"), `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argsPath}"\n`, { mode: 0o755 });
+    const env = { ...process.env, PATH: `${dir}:${process.env.PATH}` };
+    const script = path.join(ops, "rentcars-trigger.sh");
+    const ok = spawnSync("bash", [script, "daytime"], { env, encoding: "utf8" });
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.deepEqual(fs.readFileSync(argsPath, "utf8").trim().split("\n"),
+      ["workflow", "run", "rentcars-daily.yml", "--repo", "prejsik/MMSL-Scrapper-Rentcars", "--ref", "main", "-f", "scheduled_slot=daytime"]);
+    fs.rmSync(argsPath);
+    const bad = spawnSync("bash", [script, "manual"], { env, encoding: "utf8" });
+    assert.equal(bad.status, 2);
+    assert.equal(fs.existsSync(argsPath), false, "an unknown slot never starts a run");
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("notification formatter preserves blank lines and alerts only when MM is absent for the whole date", () => {

@@ -15,6 +15,10 @@ const MERGE_JOB_NAMES = new Set([
   "Merge and publish RentCars.pl report"
 ]);
 const DAYTIME_RUN_TITLE = "RentCars daytime run";
+// Runs started on time by the OVH server timer (workflow_dispatch with scheduled_slot).
+const OVH_NIGHT_RUN_TITLE = "RentCars daily run (OVH)";
+const OVH_DAYTIME_RUN_TITLE = "RentCars daytime run (OVH)";
+const SLOT_CLAIM_WINDOW_MS = 36 * 60 * 60 * 1000;
 const WARSAW_TIME = new Intl.DateTimeFormat("en-GB", {
   timeZone: "Europe/Warsaw", year: "numeric", month: "2-digit", day: "2-digit",
   hour: "2-digit", minute: "2-digit", hourCycle: "h23"
@@ -38,10 +42,69 @@ function isWatchdogRecovery(run) {
     && String(run?.display_title || "") === "RentCars watchdog recovery";
 }
 
+/** True for a run the OVH timer started for the 19:17 or 10:17 slot. */
+function isOvhScheduledRun(run) {
+  const title = String(run?.display_title || "");
+  return run?.event === "workflow_dispatch" && (title === OVH_NIGHT_RUN_TITLE || title === OVH_DAYTIME_RUN_TITLE);
+}
+
+/** True for any run that stands for a planned collection: GitHub schedule or the OVH timer. */
+function isScheduledRun(run) {
+  return run?.event === "schedule" || isOvhScheduledRun(run);
+}
+
+/** True for the 10:17 (afternoon report) collection, whichever timer started it. */
+function isDaytimeRun(run) {
+  const title = String(run?.display_title || "");
+  return (run?.event === "schedule" && title === DAYTIME_RUN_TITLE)
+    || (isOvhScheduledRun(run) && title === OVH_DAYTIME_RUN_TITLE);
+}
+
 function recoveryProfile(run) {
-  return run?.event === "schedule" && String(run?.display_title || "") === DAYTIME_RUN_TITLE
-    ? "daytime"
-    : "night";
+  return isDaytimeRun(run) ? "daytime" : "night";
+}
+
+function warsawDateOf(time) {
+  const parts = Object.fromEntries(WARSAW_TIME.formatToParts(new Date(time)).map(({ type, value }) => [type, value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+/**
+ * Identifies the planned collection a run stands for, e.g. "night:2026-11-23"
+ * (19:17 run for the 23rd morning report) or "daytime:2026-11-23"; null for
+ * manual and watchdog recovery runs.
+ */
+function scheduledSlotKey(run) {
+  const createdAt = timestamp(run?.created_at);
+  if (!isScheduledRun(run) || createdAt == null) {
+    return null;
+  }
+  return isDaytimeRun(run)
+    ? `daytime:${warsawDateOf(createdAt)}`
+    : `night:${primaryRunCycleDate(createdAt)}`;
+}
+
+/**
+ * Returns the earliest trusted run that already claimed the current run's slot,
+ * or null when the current run is the first one and must collect data. A delayed
+ * GitHub schedule run thereby skips the slot the OVH timer started on time.
+ */
+function findEarlierSlotClaim(currentRun, runs, options = {}) {
+  const key = scheduledSlotKey(currentRun);
+  const currentTime = timestamp(currentRun?.created_at);
+  if (!key || currentTime == null || !isTrustedDailyRun(currentRun, options)) {
+    return null;
+  }
+  const isEarlier = (run) => {
+    const time = timestamp(run?.created_at);
+    return time != null && (time < currentTime || (time === currentTime && Number(run.id) < Number(currentRun.id)));
+  };
+  return (Array.isArray(runs) ? runs : [])
+    .filter((run) => Number(run?.id) !== Number(currentRun.id))
+    .filter((run) => isTrustedDailyRun(run, options) && scheduledSlotKey(run) === key && isEarlier(run))
+    .filter((run) => currentTime - timestamp(run.created_at) <= SLOT_CLAIM_WINDOW_MS)
+    .sort((left, right) => timestamp(left.created_at) - timestamp(right.created_at) || Number(left.id) - Number(right.id))[0]
+    || null;
 }
 
 async function includeTriggeredRun(runs, options = {}) {
@@ -121,7 +184,7 @@ function isTrustedDailyRun(run, options = {}) {
 
   const sourceRepository = String(run?.head_repository?.full_name || "");
   const eventRepository = String(run?.repository?.full_name || repository);
-  const trustedEvent = run?.event === "schedule" || isWatchdogRecovery(run);
+  const trustedEvent = isScheduledRun(run) || isWatchdogRecovery(run);
   return trustedEvent
     && sourceRepository === repository
     && eventRepository === repository
@@ -314,7 +377,7 @@ async function enrichRunJobEvidence(runs, options = {}) {
 
 function selectNewestPrimaryRun(runs) {
   const orderedRuns = (Array.isArray(runs) ? [...runs] : [])
-    .filter((run) => run?.event === "schedule" || isWatchdogRecovery(run))
+    .filter((run) => isScheduledRun(run) || isWatchdogRecovery(run))
     .sort((left, right) => (timestamp(right.created_at) || 0) - (timestamp(left.created_at) || 0));
 
   for (const run of orderedRuns) {
@@ -334,7 +397,7 @@ function classifyDailyRuns(runs, options = {}) {
   const now = timestamp(options.now) ?? Date.now();
   const maxAgeMs = Number(options.maxAgeMs) || null;
   const recentRuns = (Array.isArray(runs) ? runs : [])
-    .filter((run) => run?.event === "schedule" || isWatchdogRecovery(run))
+    .filter((run) => isScheduledRun(run) || isWatchdogRecovery(run))
     .filter((run) => recoveryProfile(run) === "night")
     .filter((run) => !options.repository || isTrustedDailyRun(run, options))
     .filter((run) => {
@@ -408,6 +471,18 @@ async function main() {
     throw new Error("Incomplete workflow runs response; automatic recovery is blocked.");
   }
   const listedRuns = Array.isArray(input) ? input : input.workflow_runs;
+  if (process.env.WATCHDOG_OUTPUT === "slot_claim") {
+    const currentRun = JSON.parse(process.env.WATCHDOG_CURRENT_RUN || "null");
+    const claim = findEarlierSlotClaim(currentRun, listedRuns, {
+      repository: process.env.WATCHDOG_REPOSITORY,
+      defaultBranch: process.env.WATCHDOG_DEFAULT_BRANCH
+    });
+    process.stdout.write(JSON.stringify({
+      slot: scheduledSlotKey(currentRun),
+      claimedBy: claim ? Number(claim.id) : null
+    }));
+    return;
+  }
   const since = timestamp(process.env.WATCHDOG_SINCE);
   if (since != null && listedRuns.some((run) => timestamp(run.created_at) == null || timestamp(run.created_at) < since)) {
     throw new Error("Workflow runs response is outside the requested date window; automatic recovery is blocked.");
@@ -471,6 +546,13 @@ if (require.main === module) {
 }
 
 module.exports = {
+  OVH_DAYTIME_RUN_TITLE,
+  OVH_NIGHT_RUN_TITLE,
+  findEarlierSlotClaim,
+  isDaytimeRun,
+  isOvhScheduledRun,
+  isScheduledRun,
+  scheduledSlotKey,
   primaryRunCycleDate,
   classifyDailyRuns,
   decideCompletedRunRecovery,

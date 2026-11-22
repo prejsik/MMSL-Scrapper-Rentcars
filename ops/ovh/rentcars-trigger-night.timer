@@ -1,0 +1,9 @@
+[Unit]
+Description=Start the RentCars night collection at 19:17 Warsaw time
+
+[Timer]
+OnCalendar=*-*-* 19:17:00 Europe/Warsaw
+Unit=rentcars-trigger@night.service
+
+[Install]
+WantedBy=timers.target

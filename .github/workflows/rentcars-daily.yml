@@ -1,5 +1,5 @@
 name: RentCars daily run
-run-name: ${{ github.event_name == 'schedule' && github.event.schedule == '17 10 * * *' && 'RentCars daytime run' || inputs.watchdog_recovery == 'true' && 'RentCars watchdog recovery' || 'RentCars daily run' }}
+run-name: ${{ github.event_name == 'schedule' && github.event.schedule == '17 10 * * *' && 'RentCars daytime run' || inputs.scheduled_slot == 'daytime' && 'RentCars daytime run (OVH)' || inputs.scheduled_slot == 'night' && 'RentCars daily run (OVH)' || inputs.watchdog_recovery == 'true' && 'RentCars watchdog recovery' || 'RentCars daily run' }}
 
 on:
   schedule:
@@ -37,6 +37,15 @@ on:
         description: "Internal marker used by the scheduled watchdog"
         required: false
         default: "false"
+      scheduled_slot:
+        description: "Planned slot started on time by the OVH timer (night = 19:17, daytime = 10:17); none for manual runs"
+        required: false
+        type: choice
+        options:
+          - none
+          - night
+          - daytime
+        default: none
 
 permissions:
   actions: read
@@ -45,7 +54,10 @@ permissions:
   id-token: write
 
 env:
-  REPORT_PROFILE: ${{ github.event_name == 'schedule' && github.event.schedule == '17 10 * * *' && 'afternoon' || 'morning' }}
+  # Planned collection slot: "night" (19:17), "daytime" (10:17) or empty for manual runs.
+  # The OVH timer starts slots on time; the GitHub schedule stays as a delayed fallback.
+  RUN_SLOT: ${{ github.event_name == 'schedule' && github.event.schedule == '17 10 * * *' && 'daytime' || github.event_name == 'schedule' && github.event.schedule == '17 19 * * *' && 'night' || github.event_name == 'workflow_dispatch' && (inputs.scheduled_slot == 'night' || inputs.scheduled_slot == 'daytime') && inputs.scheduled_slot || '' }}
+  REPORT_PROFILE: ${{ (github.event_name == 'schedule' && github.event.schedule == '17 10 * * *' || inputs.scheduled_slot == 'daytime') && 'afternoon' || 'morning' }}
   SCHEDULE_ROLLING_DAYS: "60"
   SCHEDULE_DAYTIME_ROLLING_DAYS: "20"
   SCHEDULE_DURATIONS: "2,3,4,5,6,7,8,9,10,11,12,13,14"
@@ -74,35 +86,51 @@ jobs:
       matrix: ${{ steps.options.outputs.matrix }}
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Check Warsaw schedule gate
         id: gate
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
         run: |
           warsaw_now="$(TZ=Europe/Warsaw date '+%Y-%m-%d %H:%M:%S %Z')"
-          trigger_schedule="${{ github.event.schedule }}"
-
           echo "Warsaw time now: $warsaw_now"
-          if [[ "${{ github.event_name }}" != "schedule" ]]; then
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
+
+          if [[ -z "$RUN_SLOT" ]]; then
+            if [[ "${{ github.event_name }}" == "schedule" ]]; then
+              echo "Unconfigured schedule trigger skipped."
+              echo "should_run=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "should_run=true" >> "$GITHUB_OUTPUT"
+            fi
             exit 0
           fi
 
-          if [[ "$trigger_schedule" == "17 10 * * *" || "$trigger_schedule" == "17 19 * * *" ]]; then
-            echo "Configured Warsaw trigger selected: $trigger_schedule"
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-            exit 0
+          # The OVH timer and the delayed GitHub schedule both start each slot;
+          # only the earliest trusted run collects data, later ones finish empty.
+          since="$(date -u -d '36 hours ago' '+%Y-%m-%dT%H:%M:%SZ')"
+          if current_run=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}") \
+            && runs_json=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/rentcars-daily.yml/runs?branch=${DEFAULT_BRANCH}&created=%3E%3D${since}&per_page=100") \
+            && claim_json=$(printf '%s' "$runs_json" | WATCHDOG_OUTPUT=slot_claim WATCHDOG_CURRENT_RUN="$current_run" \
+              WATCHDOG_REPOSITORY="$GITHUB_REPOSITORY" WATCHDOG_DEFAULT_BRANCH="$DEFAULT_BRANCH" node src/rentcars/watchdog.js); then
+            claimed_by=$(CLAIM_JSON="$claim_json" node -e 'process.stdout.write(String(JSON.parse(process.env.CLAIM_JSON).claimedBy ?? ""))')
+            if [[ -n "$claimed_by" ]]; then
+              echo "Slot $RUN_SLOT already started by run $claimed_by; this run skips collection."
+              echo "should_run=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          else
+            echo "::warning::Could not check earlier runs for slot $RUN_SLOT; collecting to avoid a missing report."
           fi
-
-          echo "Unconfigured schedule trigger skipped."
-          echo "should_run=false" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout repository
-        if: steps.gate.outputs.should_run == 'true'
-        uses: actions/checkout@v4
+          echo "Configured Warsaw slot selected: $RUN_SLOT"
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
 
       - name: Read original scheduled run time
         id: original_run
-        if: steps.gate.outputs.should_run == 'true' && github.event_name == 'schedule'
+        if: steps.gate.outputs.should_run == 'true' && env.RUN_SLOT != ''
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -115,8 +143,6 @@ jobs:
         id: options
         shell: bash
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          TRIGGER_SCHEDULE: ${{ github.event.schedule }}
           RUN_CREATED_AT: ${{ steps.original_run.outputs.created_at }}
           INPUT_LOCATIONS: ${{ inputs.locations }}
           INPUT_ROLLING_DAYS: ${{ inputs.rolling_days }}
@@ -141,10 +167,15 @@ jobs:
             exit 0
           fi
 
+          if [[ -n "$RUN_SLOT" ]]; then
+            # Planned slots always use the configured schedule, never dispatch defaults.
+            INPUT_LOCATIONS=""; INPUT_ROLLING_DAYS=""; INPUT_DURATIONS=""
+            INPUT_SPEED_MODE=""; INPUT_SORT_ORDERS=""; INPUT_LOCATION_CONCURRENCY=""
+          fi
           catalog_locations="$(node -e "const { defaultLocationCities } = require('./src/rentcars/locations'); process.stdout.write(defaultLocationCities().join(','));")"
           locations="${INPUT_LOCATIONS:-$catalog_locations}"
           default_rolling_days="$SCHEDULE_ROLLING_DAYS"
-          if [[ "$EVENT_NAME" == "schedule" && "$TRIGGER_SCHEDULE" == "17 10 * * *" ]]; then
+          if [[ "$RUN_SLOT" == "daytime" ]]; then
             default_rolling_days="$SCHEDULE_DAYTIME_ROLLING_DAYS"
           fi
           rolling_days="${INPUT_ROLLING_DAYS:-$default_rolling_days}"
@@ -182,10 +213,10 @@ jobs:
 
           first_date="$(node -e '
             const { primaryRunCycleDate } = require("./src/rentcars/watchdog");
-            const scheduled = process.env.EVENT_NAME === "schedule";
+            const scheduled = Boolean(process.env.RUN_SLOT);
             const time = scheduled ? Date.parse(process.env.RUN_CREATED_AT) : Date.now();
             if (!Number.isFinite(time)) throw new Error("Missing original scheduled run creation time.");
-            if (scheduled && process.env.TRIGGER_SCHEDULE === "17 19 * * *") {
+            if (process.env.RUN_SLOT === "night") {
               process.stdout.write(primaryRunCycleDate(time));
             } else {
               const localDate = new Intl.DateTimeFormat("en-CA", {

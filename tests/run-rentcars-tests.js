@@ -992,7 +992,8 @@ runTest("daily workflow leaves delayed recovery to the watchdog", () => {
   const checkoutIndex = daily.indexOf("- name: Checkout repository");
 
   assert.doesNotMatch(daily, /- cron: "17 1 \* \* \*"/);
-  assert.ok(gateIndex >= 0 && checkoutIndex > gateIndex);
+  // The gate reads src/rentcars/watchdog.js to skip slots already started by the OVH timer.
+  assert.ok(gateIndex >= 0 && checkoutIndex >= 0 && checkoutIndex < gateIndex);
   assert.match(daily, /if: steps\.gate\.outputs\.should_run == 'true'/);
   assert.doesNotMatch(daily, /retry_run_id|status=completed/);
   assert.match(daily, /^  notify:$/m);

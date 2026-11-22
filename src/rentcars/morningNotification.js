@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const { isTrustedDailyRun, primaryRunCycleDate } = require("./watchdog");
+const { isDaytimeRun, isTrustedDailyRun, primaryRunCycleDate } = require("./watchdog");
 
 const TIME_ZONE = "Europe/Warsaw";
 const isScrape = (job) => String(job?.name || "").startsWith("Scrape chunk ");
@@ -69,7 +69,7 @@ async function collectMorningMessage({ repository, defaultBranch, token, now = D
   const payload = await api(`actions/workflows/rentcars-daily.yml/runs?branch=${encodeURIComponent(defaultBranch)}&per_page=100`);
   const runs = (payload.workflow_runs || []).filter((run) =>
     isTrustedDailyRun(run, { repository, defaultBranch })
-    && String(run.display_title || "") !== "RentCars daytime run"
+    && !isDaytimeRun(run)
     && Number.isFinite(Date.parse(run.created_at)) && Date.parse(run.created_at) <= now
     && primaryRunCycleDate(Date.parse(run.created_at)) === cycleDate
   ).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
