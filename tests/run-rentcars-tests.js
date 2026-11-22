@@ -854,10 +854,10 @@ runTest("daily Telegram message keeps a blank line before its only report link",
   const daily = fs.readFileSync(".github/workflows/rentcars-daily.yml", "utf8");
 
   const formatter = fs.readFileSync("src/rentcars/dailyNotification.js", "utf8");
-  assert.match(formatter, /RentCars\.pl: run finished/);
+  assert.match(formatter, /RentCars\.pl: przebieg zakończony/);
   assert.ok(daily.includes('profile_url="${pages_url}${REPORT_PROFILE}/"'));
   assert.ok(daily.includes('page_url="$profile_url"'));
-  assert.match(daily, /printf -v section '\\n\\nCurrent HTML report:\\n%sreport\.html\\n'/);
+  assert.match(daily, /printf -v section '\\n\\nRaport:\\n%sreport\.html\\n'/);
   assert.doesNotMatch(daily, /Artifact backup|GitHub Actions run:/);
   assert.doesNotMatch(daily, /message\+=\$\(printf/);
 });
@@ -997,7 +997,7 @@ runTest("daily workflow leaves delayed recovery to the watchdog", () => {
   assert.doesNotMatch(daily, /retry_run_id|status=completed/);
   assert.match(daily, /^  notify:$/m);
   assert.match(daily, /if: always\(\) && \(needs\.plan\.result != 'success'/);
-  assert.match(daily, /details unavailable; plan=%s, scrape=%s, merge=%s/);
+  assert.match(daily, /brak szczegółów \(plan=%s, scrape=%s, merge=%s\)/);
   assert.match(daily, /if: always\(\) && !cancelled\(\) && needs\.plan\.result == 'success' && needs\.plan\.outputs\.should_run == 'true'/);
 });
 

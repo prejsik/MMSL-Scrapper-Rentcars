@@ -137,7 +137,7 @@ function executeNotification({ withBody, pagesSiteAvailable = true, metadataAtte
   if (withBody) {
     const body = notificationPayload
       ? require("../src/rentcars/dailyNotification").buildDailyNotification(notificationPayload)
-      : "RentCars.pl: run finished (complete).";
+      : "RentCars.pl: przebieg zakończony – komplet danych";
     fs.writeFileSync(path.join(inputDir, "rentcars-notification-body.txt"), body, "utf8");
   }
   fs.writeFileSync(bashEnvPath, [
@@ -235,17 +235,17 @@ test("daily notification sends one verified report link or one bounded link-free
   const linkCount = (message) => (message.match(/https?:\/\//g) || []).length;
 
   const successMessage = execute({ withBody: true });
-  assert.equal((successMessage.match(/RentCars\.pl: run finished/g) || []).length, 1);
-  assert.match(successMessage, /Current HTML report:\nhttps:\/\/reports\.example\.test\/rentcars\/afternoon\/report\.html\n$/);
+  assert.equal((successMessage.match(/RentCars\.pl: przebieg zakończony/g) || []).length, 1);
+  assert.match(successMessage, /Raport:\nhttps:\/\/reports\.example\.test\/rentcars\/afternoon\/report\.html\n$/);
 
   const morningSuccessMessage = execute({ withBody: true, reportProfile: "morning" });
-  assert.equal((morningSuccessMessage.match(/RentCars\.pl: run finished/g) || []).length, 1);
-  assert.match(morningSuccessMessage, /Current HTML report:\nhttps:\/\/reports\.example\.test\/rentcars\/morning\/report\.html\n$/);
+  assert.equal((morningSuccessMessage.match(/RentCars\.pl: przebieg zakończony/g) || []).length, 1);
+  assert.match(morningSuccessMessage, /Raport:\nhttps:\/\/reports\.example\.test\/rentcars\/morning\/report\.html\n$/);
 
   const noJsonMessage = execute({ withBody: false });
-  assert.equal((noJsonMessage.match(/RentCars\.pl: run finished/g) || []).length, 1);
-  assert.match(noJsonMessage, /details unavailable; plan=success, scrape=success, merge=success/);
-  assert.match(noJsonMessage, /Current HTML report:\nhttps:\/\/reports\.example\.test\/rentcars\/afternoon\/report\.html\n$/);
+  assert.equal((noJsonMessage.match(/RentCars\.pl: przebieg zakończony/g) || []).length, 1);
+  assert.match(noJsonMessage, /brak szczegółów \(plan=success, scrape=success, merge=success\)/);
+  assert.match(noJsonMessage, /Raport:\nhttps:\/\/reports\.example\.test\/rentcars\/afternoon\/report\.html\n$/);
 
   for (const message of [successMessage, morningSuccessMessage, noJsonMessage]) {
     assert.equal(linkCount(message), 1, "a published report sends exactly one link");
@@ -254,12 +254,12 @@ test("daily notification sends one verified report link or one bounded link-free
 
   const pagesFailureMessage = execute({ withBody: true, pagesSiteAvailable: false });
   assert.equal(linkCount(pagesFailureMessage), 0, "an unpublished report sends no links");
-  assert.equal((pagesFailureMessage.match(/RentCars\.pl: run finished/g) || []).length, 1);
+  assert.equal((pagesFailureMessage.match(/RentCars\.pl: przebieg zakończony/g) || []).length, 1);
   assert.doesNotMatch(pagesFailureMessage, /report\.html/);
-  assert.match(pagesFailureMessage, /Raport nie trafił na stronę\. Napisz do agenta, żeby sprawdził i opublikował\.\n$/);
+  assert.match(pagesFailureMessage, /Raport nie trafił na stronę\. Napisz do Bartka, żeby sprawdził i opublikował\.\n$/);
 
   const staleAttemptMessage = execute({ withBody: true, metadataAttempt: "1" });
-  assert.equal((staleAttemptMessage.match(/RentCars\.pl: run finished/g) || []).length, 1);
+  assert.equal((staleAttemptMessage.match(/RentCars\.pl: przebieg zakończony/g) || []).length, 1);
   assert.doesNotMatch(staleAttemptMessage, /report\.html/);
   assert.match(staleAttemptMessage, /Raport nie trafił na stronę/);
 
@@ -272,8 +272,8 @@ test("daily notification sends one verified report link or one bounded link-free
 
 test("fresh metadata with modified stale HTML keeps the notification link-free after eighteen checks", () => {
   const message = executeNotification({ withBody: true, staleHtml: true, expectedMetadataRequests: 18 });
-  assert.doesNotMatch(message, /Current HTML report|report\.html/);
-  assert.match(message, /Raport nie trafił na stronę\. Napisz do agenta, żeby sprawdził i opublikował\.\n$/);
+  assert.doesNotMatch(message, /Raport:|report\.html/);
+  assert.match(message, /Raport nie trafił na stronę\. Napisz do Bartka, żeby sprawdził i opublikował\.\n$/);
 });
 
 test("notification requires local artifact HTML and valid current run identity", () => {
@@ -283,8 +283,8 @@ test("notification requires local artifact HTML and valid current run identity",
     { malformedMetadata: true, expectedMetadataRequests: 18 }
   ]) {
     const message = executeNotification({ withBody: true, ...options });
-    assert.doesNotMatch(message, /Current HTML report|report\.html/);
-    assert.match(message, /Raport nie trafił na stronę\. Napisz do agenta, żeby sprawdził i opublikował\.\n$/);
+    assert.doesNotMatch(message, /Raport:|report\.html/);
+    assert.match(message, /Raport nie trafił na stronę\. Napisz do Bartka, żeby sprawdził i opublikował\.\n$/);
   }
 });
 
@@ -294,9 +294,9 @@ test("failed partial merge still notifies its real status and may link its exact
     successful_check_count: 1, failed_check_count: 0, missing_check_count: 1, expected_check_count: 2,
     scenarios: []
   } });
-  assert.match(message, /run finished \(partial; 1\/2 scenarios; 1 successful, 0 failed, 1 missing \/ 2 checks/);
-  assert.doesNotMatch(message, /run finished \(complete/);
-  assert.match(message, /Current HTML report:/);
+  assert.match(message, /przebieg zakończony – niepełne dane\nScenariusze: 1\/2\nSprawdzenia cen: udane 1, błędy 0, brak wyniku 1 \(z 2\)\nWygenerowano: nieznana/);
+  assert.doesNotMatch(message, /komplet danych/);
+  assert.match(message, /Raport:\n/);
 });
 
 function evaluateExpression(expression, context) {
@@ -448,7 +448,10 @@ test("notification formatter preserves blank lines and alerts only when MM is ab
     expectedStartDates: "2026-10-01,2026-10-02",
     expectedDurations: "2,3"
   }), [
-    "RentCars.pl: run finished (complete; 4/4 scenarios; 4 successful, 0 failed, 0 missing / 4 checks; generated 2026-09-26T05:00:00.000Z).",
+    "RentCars.pl: przebieg zakończony – komplet danych",
+    "Scenariusze: 4/4",
+    "Sprawdzenia cen: udane 4, błędy 0, brak wyniku 0 (z 4)",
+    "Wygenerowano: 26.09.2026, 07:00",
     "",
     "ALERT MM Cars Rental",
     "",

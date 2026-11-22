@@ -8,6 +8,7 @@ const { yaml } = require("../node_modules/playwright-core/lib/utilsBundle");
 
 const { mergePayloads } = require("../src/rentcars/mergeResults");
 const { buildMmAvailabilityAlert } = require("../src/rentcars/telegramSummary");
+const { RUN_STATUS_LABELS } = require("../src/rentcars/dailyNotification");
 
 const startDate = "2026-09-10";
 const location = "Warszawa, Lotnisko-Okecie";
@@ -209,7 +210,7 @@ for (const item of mergeCases) {
       assert.equal(metadata.run_status, item.status);
       assert.equal(metadata.run_id, "77");
       assert.equal(metadata.run_attempt, 2);
-      assert.ok(fs.readFileSync(bodyPath, "utf8").startsWith(`RentCars.pl: run finished (${item.status};`));
+      assert.ok(fs.readFileSync(bodyPath, "utf8").startsWith(`RentCars.pl: przebieg zakończony – ${RUN_STATUS_LABELS[item.status]}\n`));
       assert.match(fs.readFileSync(stepOutput, "utf8"), /report_exists=true/);
       assert.match(fs.readFileSync(stepOutput, "utf8"), /metadata_exists=true/);
       const run = (gate?.run || ":").replaceAll("output/rentcars-results-latest.json", `"${output.replaceAll("\\", "/")}"`);

@@ -624,7 +624,7 @@ jobs:
           if [[ -s notification-input/rentcars-notification-body.txt ]]; then
             message=$(<notification-input/rentcars-notification-body.txt)
           else
-            printf -v message 'RentCars.pl: run finished (details unavailable; plan=%s, scrape=%s, merge=%s).' \
+            printf -v message 'RentCars.pl: przebieg zakończony – brak szczegółów (plan=%s, scrape=%s, merge=%s).' \
               "$PLAN_RESULT" "$SCRAPE_RESULT" "$MERGE_RESULT"
           fi
 
@@ -694,9 +694,9 @@ jobs:
 
           # The message carries only one link: the confirmed report on Pages.
           if [[ -n "$page_url" ]]; then
-            printf -v section '\n\nCurrent HTML report:\n%sreport.html\n' "$page_url"
+            printf -v section '\n\nRaport:\n%sreport.html\n' "$page_url"
           else
-            printf -v section '\n\nRaport nie trafił na stronę. Napisz do agenta, żeby sprawdził i opublikował.\n'
+            printf -v section '\n\nRaport nie trafił na stronę. Napisz do Bartka, żeby sprawdził i opublikował.\n'
           fi
           message+="$section"
 
