@@ -70,6 +70,35 @@ test("daily notification is independent from Pages and has read-only permissions
   assert.match(String(daily.jobs.publish.outputs.published), /pages-deployment\.outcome == 'success'/);
 });
 
+test("daily Pages deployment retries once when the fresh artifact is not yet visible", () => {
+  const daily = workflow(".github/workflows/rentcars-daily.yml");
+  const steps = daily.jobs.publish.steps;
+  const index = (id) => steps.findIndex((step) => step.id === id);
+  const first = steps[index("pages-deploy-first")];
+  const retry = steps[index("pages-deploy-retry")];
+  const confirm = steps[index("pages-deployment")];
+  const wait = steps.find((step) => step.name === "Wait before retrying GitHub Pages deployment");
+  const artifactName = "github-pages-attempt-${{ github.run_attempt }}";
+
+  assert.equal(first.uses, "actions/deploy-pages@v4");
+  assert.equal(first["continue-on-error"], true);
+  assert.equal(first.with.artifact_name, artifactName);
+  assert.equal(wait.if, "steps.pages-deploy-first.outcome == 'failure'");
+  assert.match(wait.run, /sleep \d+/);
+  assert.equal(retry.uses, "actions/deploy-pages@v4");
+  assert.equal(retry.if, "steps.pages-deploy-first.outcome == 'failure'");
+  assert.equal(retry["continue-on-error"], undefined, "a failed retry must still fail the run for the watchdog");
+  assert.equal(retry.with.artifact_name, artifactName);
+  assert.equal(confirm.uses, undefined);
+  assert.match(confirm.if, /pages-deploy-first\.outcome == 'success'/);
+  assert.match(confirm.if, /pages-deploy-retry\.outcome == 'success'/);
+  assert.match(confirm.env.PAGE_URL, /pages-deploy-first\.outputs\.page_url \|\| steps\.pages-deploy-retry\.outputs\.page_url/);
+  assert.match(confirm.run, /page_url=/);
+  assert.ok(index("pages-deploy-first") < index("pages-deploy-retry"));
+  assert.ok(index("pages-deploy-retry") < index("pages-deployment"));
+  assert.equal(daily.jobs.publish.environment.url, "${{ steps.pages-deployment.outputs.page_url }}");
+});
+
 test("cancelling a daily run blocks merging and publishing its partial report", () => {
   const daily = workflow(".github/workflows/rentcars-daily.yml");
   for (const name of ["merge", "publish"]) {
@@ -208,21 +237,21 @@ test("daily notification sends one verified report link or one bounded link-free
 
   const successMessage = execute({ withBody: true });
   assert.equal((successMessage.match(/RentCars\.pl: run finished/g) || []).length, 1);
-  assert.match(successMessage, /Current HTML report:\nhttps:\/\/reports\.example\.test\/rentcars\/afternoon\/report\.html\n\nArtifact backup:/);
+  assert.match(successMessage, /Current HTML report:\nhttps:\/\/reports\.example\.test\/rentcars\/afternoon\/report\.html\n\nArtifact backup \(requires GitHub sign-in\):/);
 
   const morningSuccessMessage = execute({ withBody: true, reportProfile: "morning" });
   assert.equal((morningSuccessMessage.match(/RentCars\.pl: run finished/g) || []).length, 1);
-  assert.match(morningSuccessMessage, /Current HTML report:\nhttps:\/\/reports\.example\.test\/rentcars\/morning\/report\.html\n\nArtifact backup:/);
+  assert.match(morningSuccessMessage, /Current HTML report:\nhttps:\/\/reports\.example\.test\/rentcars\/morning\/report\.html\n\nArtifact backup \(requires GitHub sign-in\):/);
 
   const noJsonMessage = execute({ withBody: false });
   assert.equal((noJsonMessage.match(/RentCars\.pl: run finished/g) || []).length, 1);
   assert.match(noJsonMessage, /details unavailable; plan=success, scrape=success, merge=success/);
-  assert.match(noJsonMessage, /Current HTML report:\nhttps:\/\/reports\.example\.test\/rentcars\/afternoon\/report\.html\n\nArtifact backup:/);
+  assert.match(noJsonMessage, /Current HTML report:\nhttps:\/\/reports\.example\.test\/rentcars\/afternoon\/report\.html\n\nArtifact backup \(requires GitHub sign-in\):/);
 
   const pagesFailureMessage = execute({ withBody: true, pagesSiteAvailable: false });
   assert.equal((pagesFailureMessage.match(/RentCars\.pl: run finished/g) || []).length, 1);
   assert.doesNotMatch(pagesFailureMessage, /report\.html/);
-  assert.match(pagesFailureMessage, /GitHub Pages deployment was not confirmed for this run\.\n\nArtifact backup:/);
+  assert.match(pagesFailureMessage, /GitHub Pages deployment was not confirmed for this run\.\n\nArtifact backup \(requires GitHub sign-in\):/);
 
   const staleAttemptMessage = execute({ withBody: true, metadataAttempt: "1" });
   assert.equal((staleAttemptMessage.match(/RentCars\.pl: run finished/g) || []).length, 1);
@@ -239,7 +268,7 @@ test("daily notification sends one verified report link or one bounded link-free
 test("fresh metadata with modified stale HTML keeps the notification link-free after eight checks", () => {
   const message = executeNotification({ withBody: true, staleHtml: true, expectedMetadataRequests: 8 });
   assert.doesNotMatch(message, /Current HTML report|report\.html/);
-  assert.match(message, /GitHub Pages deployment was not confirmed for this run\.\n\nArtifact backup:/);
+  assert.match(message, /GitHub Pages deployment was not confirmed for this run\.\n\nArtifact backup \(requires GitHub sign-in\):/);
 });
 
 test("notification requires local artifact HTML and valid current run identity", () => {
@@ -250,7 +279,7 @@ test("notification requires local artifact HTML and valid current run identity",
   ]) {
     const message = executeNotification({ withBody: true, ...options });
     assert.doesNotMatch(message, /Current HTML report|report\.html/);
-    assert.match(message, /GitHub Pages deployment was not confirmed for this run\.\n\nArtifact backup:/);
+    assert.match(message, /GitHub Pages deployment was not confirmed for this run\.\n\nArtifact backup \(requires GitHub sign-in\):/);
   }
 });
 
@@ -263,7 +292,7 @@ test("failed partial merge still notifies its real status and may link its exact
   assert.match(message, /run finished \(partial; 1\/2 scenarios; 1 successful, 0 failed, 1 missing \/ 2 checks/);
   assert.doesNotMatch(message, /run finished \(complete/);
   assert.match(message, /Current HTML report:/);
-  assert.match(message, /Artifact backup:/);
+  assert.match(message, /Artifact backup \(requires GitHub sign-in\):/);
 });
 
 function evaluateExpression(expression, context) {

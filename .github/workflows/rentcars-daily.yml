@@ -545,12 +545,36 @@ jobs:
           name: github-pages-attempt-${{ github.run_attempt }}
           path: pages
 
+      # deploy-pages can list run artifacts before the just-uploaded Pages
+      # artifact becomes visible ("No artifacts named ... were found"), so the
+      # deployment gets one delayed retry before the job is marked as failed.
       - name: Deploy GitHub Pages
-        id: pages-deployment
+        id: pages-deploy-first
         if: steps.pages-status.outputs.enabled == 'true'
+        continue-on-error: true
         uses: actions/deploy-pages@v4
         with:
           artifact_name: github-pages-attempt-${{ github.run_attempt }}
+
+      - name: Wait before retrying GitHub Pages deployment
+        if: steps.pages-deploy-first.outcome == 'failure'
+        shell: bash
+        run: sleep 60
+
+      - name: Retry GitHub Pages deployment
+        id: pages-deploy-retry
+        if: steps.pages-deploy-first.outcome == 'failure'
+        uses: actions/deploy-pages@v4
+        with:
+          artifact_name: github-pages-attempt-${{ github.run_attempt }}
+
+      - name: Confirm GitHub Pages deployment
+        id: pages-deployment
+        if: steps.pages-deploy-first.outcome == 'success' || steps.pages-deploy-retry.outcome == 'success'
+        shell: bash
+        env:
+          PAGE_URL: ${{ steps.pages-deploy-first.outputs.page_url || steps.pages-deploy-retry.outputs.page_url }}
+        run: echo "page_url=${PAGE_URL}" >> "$GITHUB_OUTPUT"
 
       - name: Verify published report slots
         if: steps.pages-deployment.outcome == 'success'
@@ -674,7 +698,7 @@ jobs:
           fi
           message+="$section"
           if [[ -n "$ARTIFACT_URL" ]]; then
-            printf -v section 'Artifact backup:\n%s\n\n' "$ARTIFACT_URL"
+            printf -v section 'Artifact backup (requires GitHub sign-in):\n%s\n\n' "$ARTIFACT_URL"
             message+="$section"
           fi
           printf -v section 'GitHub Actions run:\n%s\n' "$RUN_URL"
