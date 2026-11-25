@@ -234,8 +234,14 @@ test("daily notification sends one verified report link or one bounded link-free
   const execute = executeNotification;
   const linkCount = (message) => (message.match(/https?:\/\//g) || []).length;
 
-  const successMessage = execute({ withBody: true });
+  const successMessage = execute({ withBody: true, notificationPayload: {
+    run_status: "complete",
+    execution_started_at: "2026-11-25T18:17:00.000Z",
+    execution_duration_ms: 4363000,
+    generated_at: "2026-11-25T19:29:43.000Z"
+  } });
   assert.equal((successMessage.match(/RentCars\.pl: przebieg zakończony/g) || []).length, 1);
+  assert.match(successMessage, /Godzina startu: 25\.11\.2026, 19:17\nCzas trwania: 1 godz\. 12 min 43 s\nWygenerowano: 25\.11\.2026, 20:29/);
   assert.match(successMessage, /Raport:\nhttps:\/\/reports\.example\.test\/rentcars\/afternoon\/report\.html\n$/);
 
   const morningSuccessMessage = execute({ withBody: true, reportProfile: "morning" });
@@ -294,7 +300,7 @@ test("failed partial merge still notifies its real status and may link its exact
     successful_check_count: 1, failed_check_count: 0, missing_check_count: 1, expected_check_count: 2,
     scenarios: []
   } });
-  assert.match(message, /przebieg zakończony – niepełne dane\nScenariusze: 1\/2\nSprawdzenia cen: udane 1, błędy 0, brak wyniku 1 \(z 2\)\nWygenerowano: nieznana/);
+  assert.match(message, /przebieg zakończony – niepełne dane\nScenariusze: 1\/2\nSprawdzenia cen: udane 1, błędy 0, brak wyniku 1 \(z 2\)\nGodzina startu: nieznana\nCzas trwania: nieznany\nWygenerowano: nieznana/);
   assert.doesNotMatch(message, /komplet danych/);
   assert.match(message, /Raport:\n/);
 });
@@ -513,6 +519,8 @@ test("notification formatter preserves blank lines and alerts only when MM is ab
     failed_check_count: 0,
     missing_check_count: 0,
     expected_check_count: 4,
+    execution_started_at: "2026-09-26T04:52:37.000Z",
+    execution_duration_ms: 443000,
     generated_at: "2026-09-26T05:00:00.000Z",
     scenarios: [
       scenario("2026-10-01", 2, "MM Cars Rental"),
@@ -529,6 +537,8 @@ test("notification formatter preserves blank lines and alerts only when MM is ab
     "RentCars.pl: przebieg zakończony – komplet danych",
     "Scenariusze: 4/4",
     "Sprawdzenia cen: udane 4, błędy 0, brak wyniku 0 (z 4)",
+    "Godzina startu: 26.09.2026, 06:52",
+    "Czas trwania: 7 min 23 s",
     "Wygenerowano: 26.09.2026, 07:00",
     "",
     "ALERT MM Cars Rental",
