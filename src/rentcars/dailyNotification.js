@@ -27,6 +27,27 @@ function formatWarsawTime(value) {
   }).format(date);
 }
 
+/** Formats the measured run duration in Polish, rounded to whole seconds. */
+function formatRunDuration(milliseconds) {
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) {
+    return "nieznany";
+  }
+
+  const totalSeconds = Math.round(milliseconds / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts = [];
+  if (hours) {
+    parts.push(`${hours} godz.`);
+  }
+  if (minutes || hours) {
+    parts.push(`${minutes} min`);
+  }
+  parts.push(`${seconds} s`);
+  return parts.join(" ");
+}
+
 /**
  * Builds the Polish Telegram summary for a merged RentCars run.
  * The workflow appends the report link (or the "not published" note) below it.
@@ -44,6 +65,8 @@ function buildDailyNotification(payload, options = {}) {
     `RentCars.pl: przebieg zakończony – ${status}`,
     `Scenariusze: ${count(payload.completed_scenario_count)}/${count(payload.expected_scenario_count)}`,
     `Sprawdzenia cen: udane ${count(payload.successful_check_count)}, błędy ${count(payload.failed_check_count)}, brak wyniku ${count(payload.missing_check_count)} (z ${count(payload.expected_check_count)})`,
+    `Godzina startu: ${formatWarsawTime(payload.execution_started_at)}`,
+    `Czas trwania: ${formatRunDuration(payload.execution_duration_ms)}`,
     `Wygenerowano: ${formatWarsawTime(payload.generated_at)}`
   ].join("\n");
   const sections = [summary];
